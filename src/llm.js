@@ -25,10 +25,6 @@ export async function generateResponse({ systemPrompt, messages, temperature = 0
       temperature,
       top_p: 0.95,
       max_tokens: maxTokens,
-      extra_body: {
-        chat_template_kwargs: { thinking: false },
-      },
-      stream: false,
     });
 
     return completion.choices[0]?.message?.content || '';
