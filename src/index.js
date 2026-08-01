@@ -11,8 +11,8 @@ if (!token) {
   console.error('❌ TELEGRAM_BOT_TOKEN is required.');
   process.exit(1);
 }
-if (!process.env.LLM_API_KEY && !process.env.NVIDIA_API_KEY) {
-  console.error('❌ LLM_API_KEY (or NVIDIA_API_KEY) is required.');
+if (!process.env.NVIDIA_API_KEY) {
+  console.error('❌ NVIDIA_API_KEY is required.');
   process.exit(1);
 }
 if (!process.env.TAVILY_API_KEY) {
