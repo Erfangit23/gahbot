@@ -6,10 +6,10 @@ import { searchFacts, formatSearchResultsForLLM } from './tavily.js';
 import { buildSystemPrompt, buildCasualPrompt } from './persona.js';
 import db from './database.js';
 
-const COOLDOWN_MS = parseInt(process.env.COOLDOWN_MS || '30000', 10);
-const MAX_REPLIES_PER_HOUR = 15;
-const CASUAL_INTERVENTION_CHANCE = 0.08; // 8% chance of casual comment
-const TONE_REFRESH_INTERVAL = 60 * 60 * 1000; // Re-analyze tone every hour
+const COOLDOWN_MS = parseInt(process.env.COOLDOWN_MS || '15000', 10);
+const MAX_REPLIES_PER_HOUR = 30;
+const CASUAL_INTERVENTION_CHANCE = 0.05; // 5% chance of casual comment
+const TONE_REFRESH_INTERVAL = 60 * 60 * 1000;
 const MIN_MESSAGES_FOR_TONE = 10;
 
 // In-memory cache for tone profiles — keyed by `${chat_id}:${thread_id}`

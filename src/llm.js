@@ -5,7 +5,7 @@ const client = new OpenAI({
   apiKey: process.env.NVIDIA_API_KEY || process.env.OPENAI_API_KEY || 'missing-key',
 });
 
-const MODEL = process.env.MODEL_NAME || 'deepseek-ai/deepseek-v4-pro';
+const MODEL = process.env.MODEL_NAME || 'deepseek-ai/deepseek-v4-flash';
 
 console.log(`[LLM] Using model: ${MODEL}`);
 console.log(`[LLM] API Key present: ${!!process.env.NVIDIA_API_KEY}`);
@@ -58,30 +58,37 @@ export async function detectTension({ recentMessages, botMentioned }) {
     .map(m => `${m.first_name || m.username || 'Unknown'}: ${m.text}`)
     .join('\n');
 
-  const systemPrompt = `You are a conversation analysis AI. Analyze the following Telegram group chat messages and determine if there is a factual disagreement, argument, or dispute that would benefit from fact-based intervention.
+  const systemPrompt = `You are a conversation analysis AI for a Persian Telegram group chat. Analyze the messages and determine if there is a disagreement, argument, factual dispute, or someone stating potentially wrong information.
 
-Respond ONLY with valid JSON (no markdown, no explanation):
+IMPORTANT: Be sensitive to subtle disagreements, not just screaming matches. Even if someone says something questionable and another person mildly pushes back, that counts.
+
+Look for these signals:
+- Disagreement words: "نه غلطه"، "اشتباهه"، "درست نیست"، "نمیدونی"، "چرت نگف"، "دفه بعدی"، "خرف زدی"
+- Correcting someone: "نه بابا اینطوری نیست"، "اصلا"، "ول کن"
+- Factual claims that could be wrong: statistics, dates, events, quotes
+- Heated tone: multiple exclamation marks, repeated messages, fast back-and-forth
+- Political/sports debates where people take sides
+- Someone presenting wrong info as fact
+
+Respond ONLY with valid JSON (no markdown):
 {
   "shouldIntervene": boolean,
   "tensionScore": 0.0-1.0,
-  "reason": "factual_dispute" | "heated_argument" | "misinformation" | "casual_chat" | "subjective_debate",
-  "topic": "brief topic description in Persian",
+  "reason": "factual_dispute" | "heated_argument" | "misinformation" | "casual_chat" | "subjective_debate" | "mild_disagreement",
+  "topic": "brief topic in Persian",
   "topicCategory": "politics" | "sports" | "science" | "economics" | "history" | "social" | "other",
-  "disputedClaims": ["list of specific factual claims that are being debated"],
-  "keyParticipants": ["usernames or names of people arguing"]
+  "disputedClaims": ["specific factual claims being debated - in Persian"],
+  "keyParticipants": ["names of people arguing"]
 }
 
-Intervene when:
-- Someone states a potentially incorrect fact that others dispute
-- A factual argument is escalating (not just casual disagreement)
-- Political, sports, or historical facts are being debated incorrectly
-- DON'T intervene for: casual chat, jokes, personal opinions without factual claims, greetings
+Score guide:
+- 0.0-0.2: Casual chat, jokes, greetings
+- 0.2-0.4: Mild disagreement or casual debate (consider intervening if facts are involved)
+- 0.4-0.6: Active disagreement with factual claims
+- 0.6-0.8: Heated argument with likely misinformation
+- 0.8-1.0: Full argument, multiple people, facts being thrown around incorrectly
 
-Tension score guide:
-- 0.0-0.3: Casual chat, no intervention needed
-- 0.3-0.5: Mild disagreement, monitor
-- 0.5-0.7: Active factual dispute, consider intervening
-- 0.7-1.0: Heated argument with misinformation, intervene immediately`;
+Intervene when tensionScore >= 0.4 AND there are factual claims or misinformation.`;
 
   try {
     const response = await generateResponse({
@@ -95,7 +102,7 @@ Tension score guide:
     const result = JSON.parse(cleaned);
 
     // Override: if tension is below threshold, don't intervene
-    const threshold = parseFloat(process.env.TENSION_THRESHOLD || '0.65');
+    const threshold = parseFloat(process.env.TENSION_THRESHOLD || '0.4');
     if (result.tensionScore < threshold) {
       result.shouldIntervene = false;
     }
