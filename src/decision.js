@@ -123,8 +123,12 @@ export async function processMessage({ chat_id, thread_id, user_id, username, fi
 
   // Check if bot was mentioned
   const botMentioned = text.toLowerCase().includes('قاهمد') ||
+                       text.toLowerCase().includes('گاحمود') ||
+                       text.toLowerCase().includes('گاهمود') ||
+                       text.toLowerCase().includes('قاحمود') ||
                        text.toLowerCase().includes('gahmood') ||
-                       text.includes(`@${botUsername}`);
+                       text.toLowerCase().includes('shahmood') ||
+                       text.includes(`@${process.env.BOT_USERNAME || 'Shahmoodbot'}`);
 
   // Cooldown check — per topic thread
   const lastReply = getLastBotReplyTime(chat_id, thread_id);
@@ -366,4 +370,67 @@ export async function handleReplyToBot({ chat_id, thread_id, user_id, username, 
   });
 
   return { text: response, topic: 'reply_to_bot', tensionScore: 0 };
+}
+
+/**
+ * Handle when someone mentions the bot by name in a message (not a command, not a reply).
+ * e.g. "قاهمد این درسته؟" or "گاحمود جواب بده"
+ */
+export async function handleDirectMention({ chat_id, thread_id, user_id, username, first_name, text, telegram_msg_id }) {
+  const recentMessages = getRecentMessages(chat_id, thread_id, 30);
+
+  let speakerTone = null;
+  try {
+    speakerTone = await getSpeakerTone(chat_id, thread_id, user_id);
+  } catch (e) {}
+
+  let groupTone = null;
+  try {
+    groupTone = await getGroupTone(chat_id, thread_id);
+  } catch (e) {}
+
+  const recentContext = formatRecentMessages(recentMessages);
+
+  let systemPrompt = buildSystemPrompt({
+    groupTone,
+    speakerProfile: speakerTone,
+    topic: 'direct_mention',
+    topicCategory: 'general',
+    searchContext: '',
+    recentContext,
+  });
+
+  systemPrompt += `\n## نکته:\nاین شخص اسمتو صدا زده و یه چیزی ازت می‌خواد. کوتاه و مستقیم جواب بده.\n`;
+
+  const conversationMessages = recentMessages
+    .slice(-8)
+    .map(m => ({
+      role: 'user',
+      content: `${m.first_name || m.username || 'ناشناس'}: ${m.text}`,
+    }));
+
+  // The person's current message (already in recentMessages but emphasize it)
+  conversationMessages.push({
+    role: 'user',
+    content: `${first_name || username || 'ناشناس'}: ${text}`,
+  });
+
+  const response = await generateResponse({
+    systemPrompt,
+    messages: conversationMessages,
+    temperature: 0.85,
+    maxTokens: 600,
+  });
+
+  if (!response || response.trim().length === 0) return null;
+
+  storeBotReply({
+    chat_id,
+    thread_id,
+    trigger_msg_id: telegram_msg_id,
+    reply_text: response,
+    topic: 'direct_mention',
+  });
+
+  return { text: response, topic: 'direct_mention', tensionScore: 0 };
 }
