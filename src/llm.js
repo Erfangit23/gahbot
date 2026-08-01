@@ -1,14 +1,15 @@
 import OpenAI from 'openai';
 
 const client = new OpenAI({
-  baseURL: 'https://integrate.api.nvidia.com/v1',
-  apiKey: process.env.NVIDIA_API_KEY || process.env.OPENAI_API_KEY || 'missing-key',
+  baseURL: process.env.LLM_BASE_URL || 'https://api.highwayapi.ai/openai',
+  apiKey: process.env.LLM_API_KEY || process.env.NVIDIA_API_KEY || 'missing-key',
 });
 
-const MODEL = process.env.MODEL_NAME || 'deepseek-ai/deepseek-v4-pro';
+const MODEL = process.env.MODEL_NAME || 'grok-4-1-fast-reasoning';
 
 console.log(`[LLM] Using model: ${MODEL}`);
-console.log(`[LLM] API Key present: ${!!process.env.NVIDIA_API_KEY}`);
+console.log(`[LLM] Base URL: ${process.env.LLM_BASE_URL || 'https://api.highwayapi.ai/openai'}`);
+console.log(`[LLM] API Key present: ${!!(process.env.LLM_API_KEY || process.env.NVIDIA_API_KEY)}`);
 console.log(`[LLM] Tavily Key present: ${!!process.env.TAVILY_API_KEY}`);
 
 /**
