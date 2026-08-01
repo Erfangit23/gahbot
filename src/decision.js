@@ -320,7 +320,7 @@ export async function handleReplyToBot({ chat_id, thread_id, user_id, username, 
   const recentContext = formatRecentMessages(recentMessages);
 
   // Build system prompt with extra context about previous bot messages
-  const systemPrompt = buildSystemPrompt({
+  let systemPrompt = buildSystemPrompt({
     groupTone,
     speakerProfile: speakerTone,
     topic: 'reply_to_bot',
