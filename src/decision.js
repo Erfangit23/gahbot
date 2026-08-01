@@ -5,6 +5,7 @@ import { analyzeSpeakerTone, analyzeGroupTone, generateResponse } from './llm.js
 import { searchFacts, formatSearchResultsForLLM, shouldSearch } from './tavily.js';
 import { buildSystemPrompt } from './persona.js';
 import { formatUserProfiles } from './userProfiles.js';
+import { getConversationContext } from './memory.js';
 import db from './database.js';
 
 const TONE_REFRESH_INTERVAL = 60 * 60 * 1000;
@@ -95,12 +96,11 @@ export async function handleReplyToBot({ chat_id, thread_id, user_id, username, 
     searchContext += formatSearchResultsForLLM([results]);
   }
 
-  const recentContext = formatRecentMessages(recentMessages);
+  const recentContext = getConversationContext(chat_id, thread_id, 15);
 
   // Collect usernames from recent messages for user profiles
-  const recentUsernames = recentMessages
-    .map(m => m.username)
-    .filter(Boolean);
+  const recentUsernames = (getRecentMessages(chat_id, thread_id, 15))
+    .map(m => m.username).filter(Boolean);
   if (username) recentUsernames.push(username);
   const userProfilesContext = formatUserProfiles([...new Set(recentUsernames)]);
 
@@ -153,10 +153,11 @@ export async function handleDirectMention({ chat_id, thread_id, user_id, usernam
     searchContext = formatSearchResultsForLLM([results]);
   }
 
-  const recentContext = formatRecentMessages(recentMessages);
+  const recentContext = getConversationContext(chat_id, thread_id, 15);
 
   // Collect usernames for profiles
-  const recentUsernames = recentMessages.map(m => m.username).filter(Boolean);
+  const recentUsernames = (getRecentMessages(chat_id, thread_id, 15))
+    .map(m => m.username).filter(Boolean);
   if (username) recentUsernames.push(username);
   const userProfilesContext = formatUserProfiles([...new Set(recentUsernames)]);
 

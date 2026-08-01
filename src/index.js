@@ -3,6 +3,7 @@ import { storeMessage } from './database.js';
 import { handleReplyToBot, handleDirectMention } from './decision.js';
 import { generateResponse } from './llm.js';
 import { startHealthServer } from './health.js';
+import { cacheMessage } from './memory.js';
 
 const token = process.env.TELEGRAM_BOT_TOKEN;
 if (!token) { console.error('❌ TELEGRAM_BOT_TOKEN required.'); process.exit(1); }
@@ -63,11 +64,12 @@ bot.on('message', async (msg) => {
                          String(msg.reply_to_message.from.id) === String(botInfo.id);
     const mentioned = isBotMentioned(text);
 
-    // Store message for memory (but don't process unless mentioned or replied to)
+    // Store message in database AND local memory cache (no AI call)
     storeMessage({
       telegram_msg_id, chat_id, thread_id, user_id, username, first_name, text,
       raw_json: JSON.stringify({ from: msg.from, chat: msg.chat, thread_id }),
     });
+    cacheMessage({ chat_id, thread_id, user_id, username, first_name, text });
 
     // Only respond when mentioned or replied to — no auto-scanning
     if (isReplyToBot) {
