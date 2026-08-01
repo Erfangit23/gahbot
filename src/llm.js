@@ -2,7 +2,7 @@ import OpenAI from 'openai';
 
 const client = new OpenAI({
   baseURL: 'https://integrate.api.nvidia.com/v1',
-  apiKey: process.env.NVIDIA_API_KEY,
+  apiKey: process.env.NVIDIA_API_KEY || process.env.OPENAI_API_KEY || 'missing-key',
 });
 
 const MODEL = process.env.MODEL_NAME || 'deepseek-ai/deepseek-v4-pro';
