@@ -44,8 +44,8 @@ function isBotMentioned(text) {
   const lower = text.toLowerCase();
   // Check various ways people might mention the bot
   const triggers = [
-    'قاهمد', 'گاحمود', 'گاهمود', 'قاحمود',
-    'gahmood', 'shahmood', 'gahmad', 'qahmood',
+    'قاهمد', 'گاحمود', 'گاهمود', 'قاحمود', 'شاهمود', 'شاهمد',
+    'gahmood', 'shahmood', 'shahmad', 'gahmad', 'qahmood',
     `@${botInfo?.username?.toLowerCase()}`,
   ];
   return triggers.some(t => lower.includes(t));
