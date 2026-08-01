@@ -1,0 +1,7 @@
+[deploy]
+startCommand = "node src/index.js"
+healthcheckPath = "/"
+healthcheckTimeout = 100
+
+[[volumes]]
+path = "/app/data"

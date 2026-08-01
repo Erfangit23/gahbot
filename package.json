@@ -1,0 +1,21 @@
+{
+  "name": "gahmood-bot",
+  "version": "1.0.0",
+  "description": "Gahmood - AI group chat bot that fact-checks arguments like a logical judge with humor",
+  "main": "src/index.js",
+  "type": "module",
+  "scripts": {
+    "start": "node src/index.js",
+    "dev": "node --watch src/index.js"
+  },
+  "dependencies": {
+    "node-telegram-bot-api": "^0.66.0",
+    "openai": "^4.67.0",
+    "better-sqlite3": "^11.3.0",
+    "axios": "^1.7.0",
+    "dotenv": "^16.4.0"
+  },
+  "engines": {
+    "node": ">=20.0.0"
+  }
+}
