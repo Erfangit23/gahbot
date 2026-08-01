@@ -13,28 +13,42 @@ console.log(`[LLM] Tavily Key present: ${!!process.env.TAVILY_API_KEY}`);
 
 /**
  * Main LLM call — generates Gahmood's responses
+ * Includes retry logic for 429 rate limiting
  */
 export async function generateResponse({ systemPrompt, messages, temperature = 0.8, maxTokens = 1024 }) {
-  try {
-    const completion = await client.chat.completions.create({
-      model: MODEL,
-      messages: [
-        { role: 'system', content: systemPrompt },
-        ...messages,
-      ],
-      temperature,
-      top_p: 0.95,
-      max_tokens: maxTokens,
-    });
+  const maxRetries = 3;
+  const baseDelay = 5000; // 5 seconds
 
-    return completion.choices[0]?.message?.content || '';
-  } catch (err) {
-    console.error('[LLM] API error:', err.status, err.message);
-    if (err.response) {
-      console.error('[LLM] Response body:', JSON.stringify(err.response.body || err.response.data || {}).substring(0, 500));
+  for (let attempt = 0; attempt < maxRetries; attempt++) {
+    try {
+      const completion = await client.chat.completions.create({
+        model: MODEL,
+        messages: [
+          { role: 'system', content: systemPrompt },
+          ...messages,
+        ],
+        temperature,
+        top_p: 0.95,
+        max_tokens: maxTokens,
+      });
+
+      return completion.choices[0]?.message?.content || '';
+    } catch (err) {
+      console.error(`[LLM] API error (attempt ${attempt + 1}/${maxRetries}):`, err.status, err.message);
+
+      // 429 = rate limited, wait and retry
+      if (err.status === 429 && attempt < maxRetries - 1) {
+ const delay = baseDelay * (attempt + 1); // 5s, 10s, 15s
+ console.log(`[LLM] Rate limited, waiting ${delay / 1000}s before retry...`);
+ await new Promise(resolve => setTimeout(resolve, delay));
+ continue;
+      }
+
+      // Non-retryable error or out of retries
+      throw err;
     }
-    throw err;
   }
+  return '';
 }
 
 /**
@@ -124,6 +138,7 @@ NEVER intervene for: sports, football, soccer, or any sports-related discussions
     return result;
   } catch (err) {
     console.error('[LLM] Tension detection error:', err.message);
+    if (err.status === 429) setRateLimited(60000);
     return {
       shouldIntervene: false,
       reason: 'analysis_error',

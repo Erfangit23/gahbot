@@ -8,9 +8,21 @@ import db from './database.js';
 
 const COOLDOWN_MS = parseInt(process.env.COOLDOWN_MS || '15000', 10);
 const MAX_REPLIES_PER_HOUR = 30;
-const CASUAL_INTERVENTION_CHANCE = 0.05; // 5% chance of casual comment
+const CASUAL_INTERVENTION_CHANCE = 0.05;
 const TONE_REFRESH_INTERVAL = 60 * 60 * 1000;
 const MIN_MESSAGES_FOR_TONE = 10;
+
+// Rate limit cooldown — when NVIDIA returns 429, pause for this long
+let rateLimitedUntil = 0;
+
+function isRateLimited() {
+  return Date.now() < rateLimitedUntil;
+}
+
+function setRateLimited(durationMs = 60000) {
+  rateLimitedUntil = Date.now() + durationMs;
+  console.log(`[Decision] Rate limited — pausing LLM calls for ${durationMs / 1000}s`);
+}
 
 // In-memory cache for tone profiles — keyed by `${chat_id}:${thread_id}`
 const toneCache = new Map();
@@ -119,7 +131,12 @@ function formatRecentMessages(messages) {
  * Now thread-aware: each topic gets its own context, tone, and cooldown
  */
 export async function processMessage({ chat_id, thread_id, user_id, username, first_name, text, telegram_msg_id }) {
-  const botUsername = process.env.BOT_USERNAME || 'gahmood_bot';
+  // Skip if rate limited by NVIDIA
+  if (isRateLimited()) {
+    return null;
+  }
+
+  const botUsername = process.env.BOT_USERNAME || 'Shahmoodbot';
 
   // Check if bot was mentioned
   const botMentioned = text.toLowerCase().includes('قاهمد') ||
@@ -325,10 +342,15 @@ export async function handleReplyToBot({ chat_id, thread_id, user_id, username, 
 
   // Search for real-time facts based on the reply text
   let searchContext = botContext;
-  if (shouldSearch(text)) {
+  if (!isRateLimited() && shouldSearch(text)) {
     console.log(`[Reply] Searching facts for: ${text.substring(0, 80)}`);
     const results = await searchFacts(text.substring(0, 200), { maxResults: 4 });
     searchContext += formatSearchResultsForLLM([results]);
+  }
+
+  // Skip LLM call if rate limited
+  if (isRateLimited()) {
+    return null;
   }
 
   // Build system prompt with extra context about previous bot messages
@@ -401,10 +423,15 @@ export async function handleDirectMention({ chat_id, thread_id, user_id, usernam
 
   // Search for real-time facts based on the message
   let searchContext = '';
-  if (shouldSearch(text)) {
+  if (!isRateLimited() && shouldSearch(text)) {
     console.log(`[Mention] Searching facts for: ${text.substring(0, 80)}`);
     const results = await searchFacts(text.substring(0, 200), { maxResults: 4 });
     searchContext = formatSearchResultsForLLM([results]);
+  }
+
+  // Skip LLM call if rate limited
+  if (isRateLimited()) {
+    return null;
   }
 
   let systemPrompt = buildSystemPrompt({
