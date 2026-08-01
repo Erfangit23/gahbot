@@ -80,7 +80,9 @@ bot.on('message', async (msg) => {
 
     // Check if this is a reply to the bot's message
     const isReplyToBot = msg.reply_to_message && msg.reply_to_message.from &&
-                         msg.reply_to_message.from.id === botInfo.id;
+                         String(msg.reply_to_message.from.id) === String(botInfo.id);
+
+    console.log(`[Debug] Message from ${first_name} (${user_id}) in chat ${chat_id}, thread: ${thread_id}, replyToBot: ${isReplyToBot}, replyTo: ${msg.reply_to_message ? msg.reply_to_message.from?.id : 'none'}, botId: ${botInfo.id}`);
 
     // Store the message with thread_id
     storeMessage({
@@ -96,18 +98,25 @@ bot.on('message', async (msg) => {
 
     // If replying directly to the bot, always respond with context
     if (isReplyToBot) {
-      const result = await handleReplyToBot({ chat_id, thread_id, user_id, username, first_name, text, telegram_msg_id });
-      if (result && result.text) {
-        const replyOptions = {
-          reply_to_message_id: telegram_msg_id,
-          parse_mode: 'HTML',
-          disable_web_page_preview: true,
-        };
-        if (thread_id !== null) {
-          replyOptions.message_thread_id = thread_id;
+      console.log('[Debug] Handling reply to bot...');
+      try {
+        const result = await handleReplyToBot({ chat_id, thread_id, user_id, username, first_name, text, telegram_msg_id });
+        if (result && result.text) {
+          const replyOptions = {
+            reply_to_message_id: telegram_msg_id,
+            parse_mode: 'HTML',
+            disable_web_page_preview: true,
+          };
+          if (thread_id !== null) {
+            replyOptions.message_thread_id = thread_id;
+          }
+          await bot.sendMessage(chat_id, result.text, replyOptions);
+          console.log(`[${new Date().toISOString()}] Replied to direct reply in chat ${chat_id} | Topic: ${result.topic}`);
+        } else {
+          console.log('[Debug] handleReplyToBot returned empty result');
         }
-        await bot.sendMessage(chat_id, result.text, replyOptions);
-        console.log(`[${new Date().toISOString()}] Replied to direct reply in chat ${chat_id} | Topic: ${result.topic}`);
+      } catch (err) {
+        console.error('[Debug] handleReplyToBot error:', err.message);
       }
       return;
     }
