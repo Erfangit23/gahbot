@@ -96,7 +96,8 @@ Tension score:
 - 0.8-1.0: Heated argument, misinformation, multiple people arguing
 
 Intervene when: tensionScore >= 0.4 AND there are factual claims that could be verified or corrected.
-Do NOT intervene for: greetings, casual jokes, friendly banter, personal stories, or opinions that are clearly subjective with no factual claims.`;
+Do NOT intervene for: greetings, casual jokes, friendly banter, personal stories, or opinions that are clearly subjective with no factual claims.
+NEVER intervene for: sports, football, soccer, or any sports-related discussions. If the topicCategory is "sports", always set shouldIntervene to false. The bot should ignore all sports conversations completely.`;
 
   try {
     const response = await generateResponse({
@@ -108,6 +109,11 @@ Do NOT intervene for: greetings, casual jokes, friendly banter, personal stories
 
     const cleaned = response.replace(/```json|```/g, '').trim();
     const result = JSON.parse(cleaned);
+
+    // Hard block: never intervene in sports
+    if (result.topicCategory === 'sports' || result.topic === 'football' || result.topic === 'فوتبال' || result.topic === 'ورزش') {
+      result.shouldIntervene = false;
+    }
 
     // Override: if tension is below threshold, don't intervene
     const threshold = parseFloat(process.env.TENSION_THRESHOLD || '0.4');
