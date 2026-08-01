@@ -6,10 +6,6 @@ import { getMessagesByUser, getGroupToneSample, getAllSpeakers, updateSpeakerTon
 import { generateResponse } from './llm.js';
 import { startHealthServer } from './health.js';
 
-// Start health check server for Railway
-const PORT = process.env.PORT || 3000;
-startHealthServer(PORT);
-
 const token = process.env.TELEGRAM_BOT_TOKEN;
 if (!token) {
   console.error('❌ TELEGRAM_BOT_TOKEN is required. Set it in .env file.');
@@ -26,6 +22,10 @@ if (!process.env.TAVILY_API_KEY) {
   process.exit(1);
 }
 
+// Start health check server for Railway
+const PORT = process.env.PORT || 3000;
+startHealthServer(PORT);
+
 // Initialize bot with polling
 const bot = new TelegramBot(token, {
   polling: {
@@ -37,27 +37,47 @@ const bot = new TelegramBot(token, {
   },
 });
 
-const botInfo = await bot.getMe();
-console.log(`✅ Gahmood Bot started: @${botInfo.username}`);
-console.log(`   Add the bot to your group and make it an admin so it can read all messages.`);
-console.log(`   For topic/forum groups: make sure 'Topics' are enabled in group settings.`);
+let botInfo = null;
+
+// Get bot info before starting
+bot.getMe().then((info) => {
+  botInfo = info;
+  console.log(`✅ Gahmood Bot started: @${botInfo.username}`);
+  console.log(`   Bot ID: ${botInfo.id}`);
+  console.log(`   Add the bot to your group and make it an admin so it can read all messages.`);
+  console.log(`   For topic/forum groups: make sure 'Topics' are enabled in group settings.`);
+  console.log('🤖 Gahmood is watching the group...');
+}).catch((err) => {
+  console.error('❌ Failed to get bot info:', err.message);
+  process.exit(1);
+});
 
 // --- Message handler ---
 
 bot.on('message', async (msg) => {
   try {
+    // Wait for botInfo if not ready yet
+    if (!botInfo) {
+      console.log('[Debug] botInfo not ready yet, skipping message');
+      return;
+    }
+
+    console.log(`[Debug] Received message: chat_id=${msg.chat.id}, type=${msg.chat.type}, from=${msg.from?.first_name} (${msg.from?.id}), text="${msg.text?.substring(0, 50)}", reply_to=${msg.reply_to_message ? msg.reply_to_message.from?.id : 'none'}`);
+
     // Only process group/supergroup chats
     if (msg.chat.type !== 'group' && msg.chat.type !== 'supergroup') {
+      console.log(`[Debug] Skipping: chat type is ${msg.chat.type}`);
       return;
     }
 
     // Skip non-text messages
     if (!msg.text || msg.text.length === 0) {
+      console.log('[Debug] Skipping: no text');
       return;
     }
 
     // Skip if message is from the bot itself
-    if (msg.from.id === botInfo.id) {
+    if (String(msg.from.id) === String(botInfo.id)) {
       return;
     }
 
@@ -69,20 +89,13 @@ bot.on('message', async (msg) => {
     const telegram_msg_id = msg.message_id;
 
     // --- Topic/Forum support ---
-    // In supergroups with Topics enabled, each message has a message_thread_id
-    // General topic has thread_id = 1 (or sometimes undefined for non-topic messages)
-    // If the group doesn't use topics, thread_id will be undefined
     let thread_id = msg.message_thread_id || null;
-
-    // For forum groups, even General topic messages might have thread_id = 1
-    // For non-forum groups, thread_id will be undefined → we store as null
-    // This ensures each topic gets its own conversation context
 
     // Check if this is a reply to the bot's message
     const isReplyToBot = msg.reply_to_message && msg.reply_to_message.from &&
                          String(msg.reply_to_message.from.id) === String(botInfo.id);
 
-    console.log(`[Debug] Message from ${first_name} (${user_id}) in chat ${chat_id}, thread: ${thread_id}, replyToBot: ${isReplyToBot}, replyTo: ${msg.reply_to_message ? msg.reply_to_message.from?.id : 'none'}, botId: ${botInfo.id}`);
+    console.log(`[Debug] Processing: isReplyToBot=${isReplyToBot}, thread_id=${thread_id}`);
 
     // Store the message with thread_id
     storeMessage({
@@ -133,14 +146,12 @@ bot.on('message', async (msg) => {
     });
 
     if (result && result.text) {
-      // Build reply options
       const replyOptions = {
         reply_to_message_id: telegram_msg_id,
         parse_mode: 'HTML',
         disable_web_page_preview: true,
       };
 
-      // If this is a forum group with topics, reply in the correct topic thread
       if (thread_id !== null) {
         replyOptions.message_thread_id = thread_id;
       }
@@ -149,9 +160,11 @@ bot.on('message', async (msg) => {
 
       const topicLabel = thread_id !== null ? `topic:${thread_id}` : 'general';
       console.log(`[${new Date().toISOString()}] Replied in chat ${chat_id} | ${topicLabel} | Topic: ${result.topic} | Tension: ${result.tensionScore}`);
+    } else {
+      console.log('[Debug] processMessage returned null (no intervention needed)');
     }
   } catch (err) {
-    console.error('[Bot] Message handling error:', err.message);
+    console.error('[Bot] Message handling error:', err.message, err.stack);
   }
 });
 
@@ -191,7 +204,6 @@ bot.onText(/\/gahmood_tone/, async (msg) => {
       response += `موضوعات رایج: ${groupTone.commonTopics.join('، ')}\n`;
     }
 
-    // Analyze top speakers in this topic
     const speakers = getAllSpeakers(chat_id, thread_id);
     response += '\n👥 فعال‌ترین اعضا در این topic:\n';
     for (const speaker of speakers.slice(0, 5)) {
@@ -295,5 +307,3 @@ process.on('SIGTERM', () => {
   bot.stopPolling();
   process.exit(0);
 });
-
-console.log('🤖 Gahmood is watching the group...');
