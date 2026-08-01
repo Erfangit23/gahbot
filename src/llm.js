@@ -53,9 +53,9 @@ export async function detectTension({ recentMessages, botMentioned }) {
     };
   }
 
-  // Send last 20 messages with full speaker context for deep understanding
+  // Send last 50 messages with full speaker context for deep understanding
   const formattedMessages = recentMessages
-    .slice(-20)
+    .slice(-50)
     .map(m => {
       const name = m.first_name || m.username || 'ناشناس';
       const time = new Date(m.created_at).toLocaleTimeString('fa-IR', { hour: '2-digit', minute: '2-digit' });
