@@ -18,6 +18,19 @@ db.pragma('foreign_keys = ON');
 
 // --- Schema ---
 
+// Check schema version and migrate if needed
+const SCHEMA_VERSION = 2;
+const currentVersion = db.pragma('user_version', { simple: true }) || 0;
+
+if (currentVersion < SCHEMA_VERSION) {
+  console.log(`[DB] Migrating from v${currentVersion} to v${SCHEMA_VERSION}...`);
+  db.exec(`DROP TABLE IF EXISTS speakers`);
+  db.exec(`DROP TABLE IF EXISTS messages`);
+  db.exec(`DROP TABLE IF EXISTS bot_replies`);
+  db.pragma(`user_version = ${SCHEMA_VERSION}`);
+  console.log('[DB] Migration complete.');
+}
+
 db.exec(`
   CREATE TABLE IF NOT EXISTS messages (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -36,14 +49,14 @@ db.exec(`
     ON messages(chat_id, thread_id, created_at DESC);
 
   CREATE TABLE IF NOT EXISTS speakers (
-    user_id INTEGER PRIMARY KEY,
+    user_id INTEGER NOT NULL,
     chat_id INTEGER NOT NULL,
     username TEXT,
     first_name TEXT,
     message_count INTEGER DEFAULT 0,
     tone_profile TEXT,
     last_updated INTEGER NOT NULL,
-    UNIQUE(user_id, chat_id)
+    PRIMARY KEY (user_id, chat_id)
   );
 
   CREATE TABLE IF NOT EXISTS bot_replies (

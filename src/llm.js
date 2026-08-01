@@ -7,26 +7,38 @@ const client = new OpenAI({
 
 const MODEL = process.env.MODEL_NAME || 'deepseek-ai/deepseek-v4-pro';
 
+console.log(`[LLM] Using model: ${MODEL}`);
+console.log(`[LLM] API Key present: ${!!process.env.NVIDIA_API_KEY}`);
+console.log(`[LLM] Tavily Key present: ${!!process.env.TAVILY_API_KEY}`);
+
 /**
  * Main LLM call — generates Gahmood's responses
  */
 export async function generateResponse({ systemPrompt, messages, temperature = 0.8, maxTokens = 1024 }) {
-  const completion = await client.chat.completions.create({
-    model: MODEL,
-    messages: [
-      { role: 'system', content: systemPrompt },
-      ...messages,
-    ],
-    temperature,
-    top_p: 0.95,
-    max_tokens: maxTokens,
-    extra_body: {
-      chat_template_kwargs: { thinking: false },
-    },
-    stream: false,
-  });
+  try {
+    const completion = await client.chat.completions.create({
+      model: MODEL,
+      messages: [
+        { role: 'system', content: systemPrompt },
+        ...messages,
+      ],
+      temperature,
+      top_p: 0.95,
+      max_tokens: maxTokens,
+      extra_body: {
+        chat_template_kwargs: { thinking: false },
+      },
+      stream: false,
+    });
 
-  return completion.choices[0]?.message?.content || '';
+    return completion.choices[0]?.message?.content || '';
+  } catch (err) {
+    console.error('[LLM] API error:', err.status, err.message);
+    if (err.response) {
+      console.error('[LLM] Response body:', JSON.stringify(err.response.body || err.response.data || {}).substring(0, 500));
+    }
+    throw err;
+  }
 }
 
 /**
