@@ -4,6 +4,7 @@ import { getRecentMessages, getSpeakerProfile, getMessagesByUser,
 import { detectTension, analyzeSpeakerTone, analyzeGroupTone, generateResponse } from './llm.js';
 import { searchFacts, formatSearchResultsForLLM } from './tavily.js';
 import { buildSystemPrompt, buildCasualPrompt } from './persona.js';
+import db from './database.js';
 
 const COOLDOWN_MS = parseInt(process.env.COOLDOWN_MS || '30000', 10);
 const MAX_REPLIES_PER_HOUR = 15;
@@ -270,4 +271,99 @@ async function generateCasualComment({ chat_id, thread_id, recentMessages, teleg
   });
 
   return { text: response, topic: 'casual', tensionScore: 0 };
+}
+
+/**
+ * Handle when someone replies directly to the bot's message.
+ * The bot responds with full conversation context — what was discussed before,
+ * what the bot said, and the person's reply.
+ */
+export async function handleReplyToBot({ chat_id, thread_id, user_id, username, first_name, text, telegram_msg_id }) {
+  // Get recent messages for context (includes the bot's previous messages)
+  const recentMessages = getRecentMessages(chat_id, thread_id, 30);
+
+  // Find the bot's last reply in this thread for direct context
+  const botReplies = db.prepare(`
+    SELECT * FROM bot_replies
+    WHERE chat_id = ? AND (thread_id = ? OR (thread_id IS NULL AND ? IS NULL))
+    ORDER BY created_at DESC
+    LIMIT 5
+  `).all(chat_id, thread_id || null, thread_id || null);
+
+  // Get speaker tone
+  let speakerTone = null;
+  try {
+    speakerTone = await getSpeakerTone(chat_id, thread_id, user_id);
+  } catch (e) {
+    console.error('[Reply] Speaker tone error:', e.message);
+  }
+
+  // Get group tone
+  let groupTone = null;
+  try {
+    groupTone = await getGroupTone(chat_id, thread_id);
+  } catch (e) {
+    console.error('[Reply] Group tone error:', e.message);
+  }
+
+  // Build context with what the bot previously said
+  let botContext = '';
+  if (botReplies.length > 0) {
+    botContext = '\n## چیزایی که تو قبلاً گفتی:\n';
+    botReplies.reverse().forEach((r, i) => {
+      const time = new Date(r.created_at).toLocaleTimeString('fa-IR', { hour: '2-digit', minute: '2-digit' });
+      botContext += `[${time}] تو: ${r.reply_text}\n`;
+    });
+  }
+
+  // Build the recent conversation context
+  const recentContext = formatRecentMessages(recentMessages);
+
+  // Build system prompt with extra context about previous bot messages
+  const systemPrompt = buildSystemPrompt({
+    groupTone,
+    speakerProfile: speakerTone,
+    topic: 'reply_to_bot',
+    topicCategory: 'general',
+    searchContext: botContext,
+    recentContext,
+  });
+
+  // Add instruction that someone is replying to the bot
+  systemPrompt += `\n## نکته مهم:\nاین شخص مستقیماً داره به پیام تو جواب میده. یعنی یا باهات موافقت کرده، یا مخالفت میکنه، یا سوال پرسیده. با توجه به چیزی که تو قبلاً گفتی جواب بده. اگه اشتباه گفتی، اعتراف کن. اگه درست گفتی، از نظرت دفاع کن.\n`;
+
+  // Build conversation — include recent messages for context, then the person's reply
+  const conversationMessages = recentMessages
+    .slice(-10)
+    .map(m => ({
+      role: 'user',
+      content: `${m.first_name || m.username || 'ناشناس'}: ${m.text}`,
+    }));
+
+  // The last message is the person's reply to the bot
+  conversationMessages.push({
+    role: 'user',
+    content: `${first_name || username || 'ناشناس'} (در جواب تو): ${text}`,
+  });
+
+  const response = await generateResponse({
+    systemPrompt,
+    messages: conversationMessages,
+    temperature: 0.85,
+    maxTokens: 800,
+  });
+
+  if (!response || response.trim().length === 0) {
+    return null;
+  }
+
+  storeBotReply({
+    chat_id,
+    thread_id,
+    trigger_msg_id: telegram_msg_id,
+    reply_text: response,
+    topic: 'reply_to_bot',
+  });
+
+  return { text: response, topic: 'reply_to_bot', tensionScore: 0 };
 }

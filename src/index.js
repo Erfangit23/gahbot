@@ -1,6 +1,6 @@
 import TelegramBot from 'node-telegram-bot-api';
 import { storeMessage } from './database.js';
-import { processMessage } from './decision.js';
+import { processMessage, handleReplyToBot } from './decision.js';
 import { analyzeGroupTone, analyzeSpeakerTone } from './llm.js';
 import { getMessagesByUser, getGroupToneSample, getAllSpeakers, updateSpeakerToneProfile } from './database.js';
 import { generateResponse } from './llm.js';
@@ -78,6 +78,10 @@ bot.on('message', async (msg) => {
     // For non-forum groups, thread_id will be undefined → we store as null
     // This ensures each topic gets its own conversation context
 
+    // Check if this is a reply to the bot's message
+    const isReplyToBot = msg.reply_to_message && msg.reply_to_message.from &&
+                         msg.reply_to_message.from.id === botInfo.id;
+
     // Store the message with thread_id
     storeMessage({
       telegram_msg_id,
@@ -89,6 +93,24 @@ bot.on('message', async (msg) => {
       text,
       raw_json: JSON.stringify({ from: msg.from, chat: msg.chat, thread_id }),
     });
+
+    // If replying directly to the bot, always respond with context
+    if (isReplyToBot) {
+      const result = await handleReplyToBot({ chat_id, thread_id, user_id, username, first_name, text, telegram_msg_id });
+      if (result && result.text) {
+        const replyOptions = {
+          reply_to_message_id: telegram_msg_id,
+          parse_mode: 'HTML',
+          disable_web_page_preview: true,
+        };
+        if (thread_id !== null) {
+          replyOptions.message_thread_id = thread_id;
+        }
+        await bot.sendMessage(chat_id, result.text, replyOptions);
+        console.log(`[${new Date().toISOString()}] Replied to direct reply in chat ${chat_id} | Topic: ${result.topic}`);
+      }
+      return;
+    }
 
     // Process the message through the decision engine
     const result = await processMessage({
