@@ -53,42 +53,50 @@ export async function detectTension({ recentMessages, botMentioned }) {
     };
   }
 
+  // Send last 20 messages with full speaker context for deep understanding
   const formattedMessages = recentMessages
-    .slice(-15) // Last 15 messages for analysis
-    .map(m => `${m.first_name || m.username || 'Unknown'}: ${m.text}`)
+    .slice(-20)
+    .map(m => {
+      const name = m.first_name || m.username || 'ناشناس';
+      const time = new Date(m.created_at).toLocaleTimeString('fa-IR', { hour: '2-digit', minute: '2-digit' });
+      return `[${time}] ${name}: ${m.text}`;
+    })
     .join('\n');
 
-  const systemPrompt = `You are a conversation analysis AI for a Persian Telegram group chat. Analyze the messages and determine if there is a disagreement, argument, factual dispute, or someone stating potentially wrong information.
+  const systemPrompt = `You are an AI that deeply understands Persian Telegram group conversations. You read every message, understand who is saying what, the meaning behind their words, the tone, and the social dynamics.
 
-IMPORTANT: Be sensitive to subtle disagreements, not just screaming matches. Even if someone says something questionable and another person mildly pushes back, that counts.
+Read the conversation carefully. Understand:
+- What each person is saying and what they MEAN (not just literal words)
+- The flow of conversation — who started a topic, who agreed, who disagreed
+- Whether someone is stating a fact that could be wrong
+- Whether two or more people have different views on something
+- Whether the disagreement is factual (verifiable) or subjective (opinion)
+- The emotional temperature — is it casual, tense, heated?
+- Who is addressing whom
 
-Look for these signals:
-- Disagreement words: "نه غلطه"، "اشتباهه"، "درست نیست"، "نمیدونی"، "چرت نگف"، "دفه بعدی"، "خرف زدی"
-- Correcting someone: "نه بابا اینطوری نیست"، "اصلا"، "ول کن"
-- Factual claims that could be wrong: statistics, dates, events, quotes
-- Heated tone: multiple exclamation marks, repeated messages, fast back-and-forth
-- Political/sports debates where people take sides
-- Someone presenting wrong info as fact
+Then decide: would this conversation benefit from someone stepping in with verified facts and a balanced perspective?
 
-Respond ONLY with valid JSON (no markdown):
+Respond ONLY with valid JSON:
 {
   "shouldIntervene": boolean,
   "tensionScore": 0.0-1.0,
   "reason": "factual_dispute" | "heated_argument" | "misinformation" | "casual_chat" | "subjective_debate" | "mild_disagreement",
-  "topic": "brief topic in Persian",
+  "topic": "موضوع بحث به فارسی",
   "topicCategory": "politics" | "sports" | "science" | "economics" | "history" | "social" | "other",
-  "disputedClaims": ["specific factual claims being debated - in Persian"],
-  "keyParticipants": ["names of people arguing"]
+  "disputedClaims": ["ادعاهای مورد بحث به فارسی - فقط ادعاهای قابل بررسی"],
+  "keyParticipants": ["اسم کسانی که بحث می‌کنند"],
+  "conversationSummary": "خلاصه کوتاه اینکه چه می‌گذرد"
 }
 
-Score guide:
-- 0.0-0.2: Casual chat, jokes, greetings
-- 0.2-0.4: Mild disagreement or casual debate (consider intervening if facts are involved)
-- 0.4-0.6: Active disagreement with factual claims
-- 0.6-0.8: Heated argument with likely misinformation
-- 0.8-1.0: Full argument, multiple people, facts being thrown around incorrectly
+Tension score:
+- 0.0-0.2: Casual chat, greetings, jokes, no disagreement
+- 0.2-0.4: Someone states an opinion, others have different views but it's friendly
+- 0.4-0.6: Real disagreement — people have different facts or views and are pushing back on each other
+- 0.6-0.8: Active argument with likely wrong information being stated as fact
+- 0.8-1.0: Heated argument, misinformation, multiple people arguing
 
-Intervene when tensionScore >= 0.4 AND there are factual claims or misinformation.`;
+Intervene when: tensionScore >= 0.4 AND there are factual claims that could be verified or corrected.
+Do NOT intervene for: greetings, casual jokes, friendly banter, personal stories, or opinions that are clearly subjective with no factual claims.`;
 
   try {
     const response = await generateResponse({

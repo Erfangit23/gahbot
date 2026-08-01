@@ -146,7 +146,7 @@ export async function processMessage({ chat_id, thread_id, user_id, username, fi
 
   // Get recent messages for this specific topic thread
   const recentMessages = getRecentMessages(chat_id, thread_id, 50);
-  if (recentMessages.length < 2) return null;
+  if (recentMessages.length < 1) return null;
 
   // Detect tension / need for intervention
   const tension = await detectTension({ recentMessages, botMentioned });
