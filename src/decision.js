@@ -2,7 +2,7 @@ import { getRecentMessages, getSpeakerProfile, getMessagesByUser,
          getGroupToneSample, getAllSpeakers, updateSpeakerToneProfile,
          getLastBotReplyTime, getBotReplyCount, storeBotReply } from './database.js';
 import { detectTension, analyzeSpeakerTone, analyzeGroupTone, generateResponse } from './llm.js';
-import { searchFacts, formatSearchResultsForLLM } from './tavily.js';
+import { searchFacts, formatSearchResultsForLLM, shouldSearch } from './tavily.js';
 import { buildSystemPrompt, buildCasualPrompt } from './persona.js';
 import db from './database.js';
 
@@ -323,13 +323,21 @@ export async function handleReplyToBot({ chat_id, thread_id, user_id, username, 
   // Build the recent conversation context
   const recentContext = formatRecentMessages(recentMessages);
 
+  // Search for real-time facts based on the reply text
+  let searchContext = botContext;
+  if (shouldSearch(text)) {
+    console.log(`[Reply] Searching facts for: ${text.substring(0, 80)}`);
+    const results = await searchFacts(text.substring(0, 200), { maxResults: 4 });
+    searchContext += formatSearchResultsForLLM([results]);
+  }
+
   // Build system prompt with extra context about previous bot messages
   let systemPrompt = buildSystemPrompt({
     groupTone,
     speakerProfile: speakerTone,
     topic: 'reply_to_bot',
     topicCategory: 'general',
-    searchContext: botContext,
+    searchContext,
     recentContext,
   });
 
@@ -391,12 +399,20 @@ export async function handleDirectMention({ chat_id, thread_id, user_id, usernam
 
   const recentContext = formatRecentMessages(recentMessages);
 
+  // Search for real-time facts based on the message
+  let searchContext = '';
+  if (shouldSearch(text)) {
+    console.log(`[Mention] Searching facts for: ${text.substring(0, 80)}`);
+    const results = await searchFacts(text.substring(0, 200), { maxResults: 4 });
+    searchContext = formatSearchResultsForLLM([results]);
+  }
+
   let systemPrompt = buildSystemPrompt({
     groupTone,
     speakerProfile: speakerTone,
     topic: 'direct_mention',
     topicCategory: 'general',
-    searchContext: '',
+    searchContext,
     recentContext,
   });
 

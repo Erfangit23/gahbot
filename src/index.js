@@ -228,8 +228,17 @@ bot.onText(/\/gahmood_ask (.+)/, async (msg, match) => {
 
   await bot.sendChatAction(chat_id, 'typing');
   try {
+    const { shouldSearch, searchFacts, formatSearchResultsForLLM } = await import('./tavily.js');
+    let searchContext = '';
+    if (shouldSearch(question)) {
+      const results = await searchFacts(question.substring(0, 200), { maxResults: 4 });
+      searchContext = formatSearchResultsForLLM([results]);
+    }
+    let sysPrompt = 'تو قاهمد هستی. یه آدم تو گروه تلگرامی. کوتاه و مستند جواب بده. فارسی حرف بزن.';
+    if (searchContext) sysPrompt += '\n' + searchContext;
+
     const response = await generateResponse({
-      systemPrompt: 'تو قاهمد هستی. یه آدم تو گروه تلگرامی. کوتاه و مستند جواب بده. فارسی حرف بزن.',
+      systemPrompt: sysPrompt,
       messages: [{ role: 'user', content: question }],
       temperature: 0.8,
       maxTokens: 500,
