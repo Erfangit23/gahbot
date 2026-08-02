@@ -14,7 +14,7 @@ if (!fs.existsSync(DATA_DIR)) {
 const db = new Database(DB_PATH);
 db.pragma('journal_mode = WAL');
 
-const SCHEMA_VERSION = 3;
+const SCHEMA_VERSION = 4;
 const currentVersion = db.pragma('user_version', { simple: true }) || 0;
 
 if (currentVersion < SCHEMA_VERSION) {
@@ -79,6 +79,16 @@ db.exec(`
     updated_at INTEGER NOT NULL,
     PRIMARY KEY (chat_id, thread_id)
   );
+
+  CREATE TABLE IF NOT EXISTS learned_facts (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    chat_id INTEGER NOT NULL,
+    fact TEXT NOT NULL,
+    taught_by TEXT,
+    created_at INTEGER NOT NULL
+  );
+
+  CREATE INDEX IF NOT EXISTS idx_learned_chat ON learned_facts(chat_id);
 `);
 
 // --- Message operations ---
@@ -169,6 +179,18 @@ export function saveGroupSummary(chat_id, thread_id, summary, participants, topi
       message_count = excluded.message_count,
       updated_at = excluded.updated_at
   `).run(chat_id, thread_id || null, summary, JSON.stringify(participants), JSON.stringify(topics), messageCount, Date.now());
+}
+
+// --- Learned facts ---
+
+export function saveLearnedFact(chat_id, fact, taughtBy) {
+  db.prepare(`INSERT INTO learned_facts (chat_id, fact, taught_by, created_at) VALUES (?, ?, ?, ?)`)
+    .run(chat_id, fact, taughtBy || null, Date.now());
+  console.log(`[Learn] Saved: ${fact.substring(0, 80)}`);
+}
+
+export function getLearnedFacts(chat_id) {
+  return db.prepare(`SELECT * FROM learned_facts WHERE chat_id = ? ORDER BY created_at DESC LIMIT 30`).all(chat_id);
 }
 
 export default db;

@@ -1,5 +1,5 @@
 import TelegramBot from 'node-telegram-bot-api';
-import { storeMessage, updateSpeakerStats } from './database.js';
+import { storeMessage, updateSpeakerStats, saveLearnedFact, getLearnedFacts } from './database.js';
 import { handleReplyToBot, handleDirectMention } from './decision.js';
 import { generateResponse } from './llm.js';
 import { startHealthServer } from './health.js';
@@ -69,6 +69,18 @@ bot.on('message', async (msg) => {
     // Check if bot should respond
     const isReplyToBot = reply_to_user_id && String(reply_to_user_id) === String(botInfo.id);
     const mentioned = isBotMentioned(text);
+
+    // Check for "learn" command: گاحمود یادبگیر که ...
+    const learnMatch = text.match(/(?:قاهمد|گاحمود|گاهمود|شاهمود|gahmood|shahmood)\s*یاد\s*بگیر\s*که\s*(.+)/i);
+    if (learnMatch) {
+      const fact = learnMatch[1].trim();
+      saveLearnedFact(chat_id, fact, first_name || username);
+      const opts = { reply_to_message_id: telegram_msg_id };
+      if (thread_id !== null) opts.message_thread_id = thread_id;
+      await bot.sendMessage(chat_id, `اوکی، حفظ کردم.`, opts);
+      console.log(`[Learn] ${first_name}: ${fact.substring(0, 80)}`);
+      return;
+    }
 
     if (!isReplyToBot && !mentioned) return; // Silent — just store
 

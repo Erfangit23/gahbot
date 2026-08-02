@@ -1,4 +1,4 @@
-import { getRecentMessages, storeBotReply } from './database.js';
+import { getRecentMessages, storeBotReply, getLearnedFacts } from './database.js';
 import { generateResponse } from './llm.js';
 import { shouldSearch, searchFacts, formatSearchResultsForLLM } from './tavily.js';
 import { buildSystemPrompt } from './persona.js';
@@ -31,8 +31,14 @@ export async function handleInteraction({ chat_id, thread_id, user_id, username,
     }
   }
 
+  // Get learned facts
+  const facts = getLearnedFacts(chat_id);
+  const learnedFacts = facts.length > 0
+    ? facts.map(f => `- ${f.fact}`).join('\n')
+    : '';
+
   // Build system prompt
-  const systemPrompt = buildSystemPrompt({ searchContext, localContext, userProfileContext });
+  const systemPrompt = buildSystemPrompt({ searchContext, localContext, userProfileContext, learnedFacts });
 
   // Build conversation — last few messages for context
   const conversationMessages = recentMessages
