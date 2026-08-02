@@ -1,4 +1,4 @@
-import { generateResponse } from './llm.js';
+import { generateCode } from './llm.js';
 import { storeMessage } from './database.js';
 import fs from 'fs';
 import path from 'path';
@@ -105,7 +105,7 @@ export async function handleCodeRequest({ chat_id, thread_id, prompt, telegram_m
     fullPrompt += `\n\nNow make these changes: ${prompt}\n\nOutput the COMPLETE updated project with ALL files (not just changed ones).`;
   }
 
-  const response = await generateResponse({
+  const response = await generateCode({
     systemPrompt: CODING_SYSTEM_PROMPT,
     messages: [{ role: 'user', content: fullPrompt }],
     temperature: 0.2,
