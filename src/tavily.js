@@ -8,29 +8,36 @@ const TAVILY_URL = 'https://api.tavily.com';
  * dates, statistics, or current/recent events.
  */
 export function shouldSearch(text) {
-  if (!text || text.length < 5) return false;
+  if (!text || text.length < 3) return false;
 
-  // Always search for these patterns
+  // Search for almost any question or factual statement
   const searchTriggers = [
-    // Years - recent events
+    // Any question words
+    /چطور|چجور|چرا|کجا|کی|کدوم|نمی‌دونم|نمیدونم|درسته|غلطه|اشتباهه|راستش|حق داره|کی بود|چی بود|چقدر|چند|رئیس|president|چه کسی|کیم|چیه|کجاست|کی هست|چطوره/,
+    // Years
     /202[0-9]/,
-    // Questions about people, events, facts
-    /چطور|چجور|چرا|کجا|کی|کدوم|نمی‌دونم|نمیدونم|درسته|غلطه|اشتباهه|راستش|حق داره|کی بود|چی بود|چقدر|چند|رئیس|president|چه کسی|کیم|چیه/,
-    // Factual indicators
-    /آمار|گزارش|طبق|according|منبع|source|news|خبر|اطلاعات|دقیق|جدید|اخیر|الان|حالا/,
-    // Political/geopolitical
-    /جنگ|war|تحریم|sanction|انتخاب|election|رئیس|president|دولت|حکومت|سیاست|معاهده|ترامپ|trump|biden|آمریکا|ایران|اسرائیل|فلسطین|روسیه|اوکراین|چین/,
+    // Factual/data indicators
+    /آمار|گزارش|طبق|according|منبع|source|news|خبر|اطلاعات|دقیق|جدید|اخیر|الان|حالا|چندتا|عدد|درصد|میلیون|میلیارد|هزار/,
+    // Politics
+    /جنگ|war|تحریم|sanction|انتخاب|election|رئیس|president|دولت|حکومت|سیاست|معاهده|ترامپ|trump|biden|آمریکا|ایران|اسرائیل|فلسطین|روسیه|اوکراین|چین|کنگره|سناتور/,
+    // People
+    /کیه|چه کسی|چه کس|بازیگر|خواننده|سیاستمدار|actor|singer|celebr|سیدنی|sydney|sweeney|کراش|دوست/,
     // Economics
-    /دلار|dollar|تورم|inflation|قیمت|price|بازار|market|کریپتو|crypto|bitcoin|بیت‌کوین/,
+    /دلار|dollar|تورم|inflation|قیمت|price|بازار|market|کریپتو|crypto|bitcoin|بیت‌کوین|درآمد|ثروت|بودجه/,
     // Science/tech
-    /واکسن|vaccine|کرونا|covid|ai|هوش مصنوعی|spaceship|space|مریخ|mars/,
-    // People/celebrities
-    /کیه|چه کسی|چه کس|بازیگر|خواننده|سیاستمدار|actor|singer|celebr|سیدنی|sydney|sweeney/,
+    /واکسن|vaccine|کرونا|covid|ai|هوش مصنوعی|spaceship|space|مریخ|mars|ناسا|nasa/,
+    // History
+    /تاریخ|history|قدیم|امپراتوری|قرن|سال|رویداد|اتفاق/,
+    // Geography
+    /پایتخت|capital|کشور|country|مساحت|جمعیت|قاره/,
   ];
 
   for (const pattern of searchTriggers) {
     if (pattern.test(text)) return true;
   }
+
+  // Also search if the message looks like a question (has question marks or starts with question words)
+  if (/[؟?]/.test(text)) return true;
 
   return false;
 }
