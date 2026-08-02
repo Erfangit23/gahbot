@@ -3,7 +3,7 @@
  * All operations are pure JavaScript + SQLite.
  */
 
-import { getRecentMessages, getMessagesByUser, getSpeakerStats, getAllSpeakers, getMessageCount, saveGroupSummary, getGroupSummary, db } from './database.js';
+import db, { getRecentMessages, getMessagesByUser, getSpeakerStats, getAllSpeakers, getMessageCount, saveGroupSummary, getGroupSummary } from './database.js';
 
 // Common Persian swear words for detection
 const SWEAR_WORDS = ['کیر', 'کص', 'گایید', 'جق', 'خرف', 'چرت', 'کصخلع', 'شاش', 'کون', 'ننه', 'بیناموس'];
