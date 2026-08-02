@@ -54,7 +54,7 @@ export async function handleInteraction({ chat_id, thread_id, user_id, username,
     systemPrompt,
     messages: conversationMessages,
     temperature: 0.8,
-    maxTokens: 500,
+    maxTokens: 800,
   });
 
   if (!response || response.trim().length === 0) return null;
