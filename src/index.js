@@ -1,13 +1,13 @@
 import TelegramBot from 'node-telegram-bot-api';
-import { storeMessage } from './database.js';
+import { storeMessage, updateSpeakerStats } from './database.js';
 import { handleReplyToBot, handleDirectMention } from './decision.js';
 import { generateResponse } from './llm.js';
 import { startHealthServer } from './health.js';
-import { cacheMessage } from './memory.js';
+import { shouldSearch, searchFacts, formatSearchResultsForLLM } from './tavily.js';
 
 const token = process.env.TELEGRAM_BOT_TOKEN;
 if (!token) { console.error('❌ TELEGRAM_BOT_TOKEN required.'); process.exit(1); }
-if (!process.env.NVIDIA_API_KEY) { console.error('❌ NVIDIA_API_KEY required.'); process.exit(1); }
+if (!process.env.LLM_API_KEY && !process.env.NVIDIA_API_KEY) { console.error('❌ LLM_API_KEY required.'); process.exit(1); }
 if (!process.env.TAVILY_API_KEY) { console.error('❌ TAVILY_API_KEY required.'); process.exit(1); }
 
 const PORT = process.env.PORT || 3000;
@@ -20,10 +20,10 @@ const bot = new TelegramBot(token, {
 let botInfo = null;
 bot.getMe().then((info) => {
   botInfo = info;
-  console.log(`✅ Gahmood Bot started: @${botInfo.username} (ID: ${botInfo.id})`);
-  console.log('🤖 Gahmood is ready. Mention or reply to talk.');
+  console.log(`✅ Gahmood started: @${botInfo.username} (ID: ${botInfo.id})`);
+  console.log('🤖 Ready. Mention or reply to talk.');
 }).catch((err) => {
-  console.error('❌ Failed to get bot info:', err.message);
+  console.error('❌ Failed:', err.message);
   process.exit(1);
 });
 
@@ -42,15 +42,12 @@ function isCommand(text) {
   return text && text.startsWith('/');
 }
 
-// --- Message handler ---
-
 bot.on('message', async (msg) => {
   try {
     if (!botInfo) return;
     if (msg.chat.type !== 'group' && msg.chat.type !== 'supergroup') return;
     if (!msg.text || msg.text.length === 0) return;
     if (String(msg.from.id) === String(botInfo.id)) return;
-    if (isCommand(msg.text)) return;
 
     const chat_id = msg.chat.id;
     const user_id = msg.from.id;
@@ -59,110 +56,72 @@ bot.on('message', async (msg) => {
     const text = msg.text;
     const telegram_msg_id = msg.message_id;
     const thread_id = msg.message_thread_id || null;
+    const reply_to_user_id = msg.reply_to_message?.from?.id || null;
+    const reply_to_msg_id = msg.reply_to_message?.message_id || null;
 
-    const isReplyToBot = msg.reply_to_message && msg.reply_to_message.from &&
-                         String(msg.reply_to_message.from.id) === String(botInfo.id);
+    // Store message + update local stats (NO AI CALL)
+    storeMessage({ telegram_msg_id, chat_id, thread_id, user_id, username, first_name, text, reply_to_user_id, reply_to_msg_id });
+    updateSpeakerStats(chat_id, user_id, username, first_name, text);
+
+    // Skip command messages (handled by onText below)
+    if (isCommand(text)) return;
+
+    // Check if bot should respond
+    const isReplyToBot = reply_to_user_id && String(reply_to_user_id) === String(botInfo.id);
     const mentioned = isBotMentioned(text);
 
-    // Store message in database AND local memory cache (no AI call)
-    storeMessage({
-      telegram_msg_id, chat_id, thread_id, user_id, username, first_name, text,
-      raw_json: JSON.stringify({ from: msg.from, chat: msg.chat, thread_id }),
-    });
-    cacheMessage({ chat_id, thread_id, user_id, username, first_name, text });
+    if (!isReplyToBot && !mentioned) return; // Silent — just store
 
-    // Only respond when mentioned or replied to — no auto-scanning
-    if (isReplyToBot) {
-      console.log(`[Route] Reply to bot from ${first_name}: "${text.substring(0, 60)}"`);
-      try {
-        const result = await handleReplyToBot({ chat_id, thread_id, user_id, username, first_name, text, telegram_msg_id });
-        if (result && result.text) {
-          await sendReply(chat_id, telegram_msg_id, thread_id, result.text);
-          console.log(`[Sent] Reply to bot`);
-        }
-      } catch (err) {
-        console.error('[Error] handleReplyToBot:', err.message);
+    console.log(`[Route] ${first_name}: "${text.substring(0, 60)}" | reply=${isReplyToBot} mention=${mentioned}`);
+
+    try {
+      const handler = isReplyToBot ? handleReplyToBot : handleDirectMention;
+      const result = await handler({ chat_id, thread_id, user_id, username, first_name, text, telegram_msg_id });
+      if (result && result.text) {
+        const opts = { reply_to_message_id: telegram_msg_id, disable_web_page_preview: true };
+        if (thread_id !== null) opts.message_thread_id = thread_id;
+        await bot.sendMessage(chat_id, result.text, opts);
+        console.log(`[Sent] OK`);
       }
-      return;
+    } catch (err) {
+      console.error('[Error]', err.message);
     }
-
-    if (mentioned) {
-      console.log(`[Route] Mention from ${first_name}: "${text.substring(0, 60)}"`);
-      try {
-        const result = await handleDirectMention({ chat_id, thread_id, user_id, username, first_name, text, telegram_msg_id });
-        if (result && result.text) {
-          await sendReply(chat_id, telegram_msg_id, thread_id, result.text);
-          console.log(`[Sent] Mention response`);
-        }
-      } catch (err) {
-        console.error('[Error] handleDirectMention:', err.message);
-      }
-      return;
-    }
-
-    // Not mentioned, not replied to — just store the message silently
   } catch (err) {
-    console.error('[Bot] Error:', err.message);
+    console.error('[Bot]', err.message);
   }
 });
 
-async function sendReply(chat_id, reply_to_id, thread_id, text) {
-  const opts = { reply_to_message_id: reply_to_id, disable_web_page_preview: true };
-  if (thread_id !== null) opts.message_thread_id = thread_id;
-  await bot.sendMessage(chat_id, text, opts);
-}
-
 // --- Commands ---
-
-bot.onText(/\/gahmood_stats/, async (msg) => {
-  if (msg.chat.type !== 'group' && msg.chat.type !== 'supergroup') return;
-  const chat_id = msg.chat.id;
-  const thread_id = msg.message_thread_id || null;
-  const replyOpts = { reply_to_message_id: msg.message_id };
-  if (thread_id !== null) replyOpts.message_thread_id = thread_id;
-  try {
-    const { getAllSpeakers } = await import('./database.js');
-    const speakers = getAllSpeakers(chat_id, thread_id);
-    let response = '📊 آمار:\n\n';
-    response += `اعضا: ${speakers.length}\n`;
-    response += 'فعال‌ترین‌ها:\n';
-    speakers.slice(0, 10).forEach((s, i) => {
-      const count = s.topic_message_count || s.message_count;
-      response += `${i + 1}. ${s.first_name || s.username || 'ناشناس'} — ${count} پیام\n`;
-    });
-    await bot.sendMessage(chat_id, response, replyOpts);
-  } catch (err) { console.error('[Bot] Stats error:', err.message); }
-});
 
 bot.onText(/\/gahmood_ask (.+)/, async (msg, match) => {
   if (msg.chat.type !== 'group' && msg.chat.type !== 'supergroup') return;
   const chat_id = msg.chat.id;
   const thread_id = msg.message_thread_id || null;
   const question = match[1];
-  const replyOpts = { reply_to_message_id: msg.message_id };
-  if (thread_id !== null) replyOpts.message_thread_id = thread_id;
+  const opts = { reply_to_message_id: msg.message_id };
+  if (thread_id !== null) opts.message_thread_id = thread_id;
+
   await bot.sendChatAction(chat_id, 'typing');
   try {
-    const { shouldSearch, searchFacts, formatSearchResultsForLLM } = await import('./tavily.js');
     let searchContext = '';
     if (shouldSearch(question)) {
       const results = await searchFacts(question.substring(0, 200), { maxResults: 4 });
       searchContext = formatSearchResultsForLLM([results]);
     }
-    let sysPrompt = 'تو قاهمد هستی. یه آدم تو گروه تلگرامی. کوتاه و مستند جواب بده. فارسی حرف بزن.';
+    let sysPrompt = 'تو قاهمد هستی. کوتاه و مستند جواب بده. فارسی حرف بزن.';
     if (searchContext) sysPrompt += '\n' + searchContext;
     const response = await generateResponse({
       systemPrompt: sysPrompt,
       messages: [{ role: 'user', content: question }],
       temperature: 0.8, maxTokens: 500,
     });
-    await bot.sendMessage(chat_id, response, replyOpts);
+    await bot.sendMessage(chat_id, response, opts);
   } catch (err) {
-    console.error('[Bot] Ask error:', err.message);
-    await bot.sendMessage(chat_id, 'الان نمی‌تونم جواب بدم.', replyOpts);
+    console.error('[Ask]', err.message);
+    await bot.sendMessage(chat_id, 'الان نمی‌تونم.', opts);
   }
 });
 
-bot.on('polling_error', (err) => console.error('[Bot] Polling:', err.message));
+bot.on('polling_error', (err) => console.error('[Polling]', err.message));
 process.on('SIGINT', () => { bot.stopPolling(); process.exit(0); });
 process.on('SIGTERM', () => { bot.stopPolling(); process.exit(0); });

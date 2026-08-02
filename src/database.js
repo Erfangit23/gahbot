@@ -1,12 +1,11 @@
 import Database from 'better-sqlite3';
 import path from 'path';
 import { fileURLToPath } from 'url';
+import fs from 'fs';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const DB_PATH = path.join(__dirname, '..', 'data', 'gahmood.db');
 
-// Ensure the data directory exists (fixes Railway/Container deployment)
-import fs from 'fs';
 const DATA_DIR = path.dirname(DB_PATH);
 if (!fs.existsSync(DATA_DIR)) {
   fs.mkdirSync(DATA_DIR, { recursive: true });
@@ -14,21 +13,18 @@ if (!fs.existsSync(DATA_DIR)) {
 
 const db = new Database(DB_PATH);
 db.pragma('journal_mode = WAL');
-db.pragma('foreign_keys = ON');
 
-// --- Schema ---
-
-// Check schema version and migrate if needed
-const SCHEMA_VERSION = 2;
+const SCHEMA_VERSION = 3;
 const currentVersion = db.pragma('user_version', { simple: true }) || 0;
 
 if (currentVersion < SCHEMA_VERSION) {
-  console.log(`[DB] Migrating from v${currentVersion} to v${SCHEMA_VERSION}...`);
+  console.log(`[DB] Migrating v${currentVersion} → v${SCHEMA_VERSION}...`);
   db.exec(`DROP TABLE IF EXISTS speakers`);
   db.exec(`DROP TABLE IF EXISTS messages`);
   db.exec(`DROP TABLE IF EXISTS bot_replies`);
+  db.exec(`DROP TABLE IF EXISTS group_summary`);
   db.pragma(`user_version = ${SCHEMA_VERSION}`);
-  console.log('[DB] Migration complete.');
+  console.log('[DB] Migration done.');
 }
 
 db.exec(`
@@ -41,12 +37,12 @@ db.exec(`
     username TEXT,
     first_name TEXT,
     text TEXT NOT NULL,
-    created_at INTEGER NOT NULL,
-    raw_json TEXT
+    reply_to_user_id INTEGER,
+    reply_to_msg_id INTEGER,
+    created_at INTEGER NOT NULL
   );
-
-  CREATE INDEX IF NOT EXISTS idx_messages_chat_thread_time
-    ON messages(chat_id, thread_id, created_at DESC);
+  CREATE INDEX IF NOT EXISTS idx_msg_chat_thread ON messages(chat_id, thread_id, created_at DESC);
+  CREATE INDEX IF NOT EXISTS idx_msg_user ON messages(user_id, chat_id);
 
   CREATE TABLE IF NOT EXISTS speakers (
     user_id INTEGER NOT NULL,
@@ -54,6 +50,10 @@ db.exec(`
     username TEXT,
     first_name TEXT,
     message_count INTEGER DEFAULT 0,
+    avg_msg_length REAL DEFAULT 0,
+    swear_count INTEGER DEFAULT 0,
+    frequent_words TEXT,
+    active_hours TEXT,
     tone_profile TEXT,
     last_updated INTEGER NOT NULL,
     PRIMARY KEY (user_id, chat_id)
@@ -69,167 +69,106 @@ db.exec(`
     created_at INTEGER NOT NULL
   );
 
-  CREATE INDEX IF NOT EXISTS idx_bot_replies_chat_thread_time
-    ON bot_replies(chat_id, thread_id, created_at DESC);
+  CREATE TABLE IF NOT EXISTS group_summary (
+    chat_id INTEGER NOT NULL,
+    thread_id INTEGER,
+    summary TEXT,
+    participants TEXT,
+    topics TEXT,
+    message_count INTEGER DEFAULT 0,
+    updated_at INTEGER NOT NULL,
+    PRIMARY KEY (chat_id, thread_id)
+  );
 `);
 
 // --- Message operations ---
 
-export function storeMessage({ telegram_msg_id, chat_id, thread_id, user_id, username, first_name, text, raw_json }) {
+export function storeMessage({ telegram_msg_id, chat_id, thread_id, user_id, username, first_name, text, reply_to_user_id, reply_to_msg_id }) {
   const now = Date.now();
   db.prepare(`
-    INSERT INTO messages (telegram_msg_id, chat_id, thread_id, user_id, username, first_name, text, created_at, raw_json)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-  `).run(telegram_msg_id, chat_id, thread_id || null, user_id, username || null, first_name || null, text, now, raw_json || null);
-
-  // Upsert speaker
-  db.prepare(`
-    INSERT INTO speakers (user_id, chat_id, username, first_name, message_count, last_updated)
-    VALUES (?, ?, ?, ?, 1, ?)
-    ON CONFLICT(user_id, chat_id)
-    DO UPDATE SET
-      message_count = message_count + 1,
-      username = COALESCE(excluded.username, speakers.username),
-      first_name = COALESCE(excluded.first_name, speakers.first_name),
-      last_updated = excluded.last_updated
-  `).run(user_id, chat_id, username || null, first_name || null, now);
+    INSERT INTO messages (telegram_msg_id, chat_id, thread_id, user_id, username, first_name, text, reply_to_user_id, reply_to_msg_id, created_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `).run(telegram_msg_id, chat_id, thread_id || null, user_id, username || null, first_name || null, text, reply_to_user_id || null, reply_to_msg_id || null, now);
 }
 
-export function getRecentMessages(chat_id, thread_id, limit = 50) {
-  // If thread_id is null, get messages without a thread (General topic or non-forum group)
-  if (thread_id === null || thread_id === undefined) {
-    return db.prepare(`
-      SELECT * FROM messages
-      WHERE chat_id = ? AND thread_id IS NULL
-      ORDER BY created_at DESC
-      LIMIT ?
-    `).all(chat_id, limit).reverse();
+export function getRecentMessages(chat_id, thread_id, limit = 15) {
+  if (!thread_id) {
+    return db.prepare(`SELECT * FROM messages WHERE chat_id = ? AND thread_id IS NULL ORDER BY created_at DESC LIMIT ?`).all(chat_id, limit).reverse();
   }
-
-  // Get messages from the specific topic thread
-  return db.prepare(`
-    SELECT * FROM messages
-    WHERE chat_id = ? AND thread_id = ?
-    ORDER BY created_at DESC
-    LIMIT ?
-  `).all(chat_id, thread_id, limit).reverse();
+  return db.prepare(`SELECT * FROM messages WHERE chat_id = ? AND thread_id = ? ORDER BY created_at DESC LIMIT ?`).all(chat_id, thread_id, limit).reverse();
 }
 
-export function getMessagesByUser(user_id, chat_id, thread_id, limit = 30) {
-  if (thread_id === null || thread_id === undefined) {
-    return db.prepare(`
-      SELECT * FROM messages
-      WHERE user_id = ? AND chat_id = ? AND thread_id IS NULL
-      ORDER BY created_at DESC
-      LIMIT ?
-    `).all(user_id, chat_id, limit).reverse();
+export function getMessageCount(chat_id, thread_id) {
+  if (!thread_id) {
+    return db.prepare(`SELECT COUNT(*) as count FROM messages WHERE chat_id = ? AND thread_id IS NULL`).get(chat_id).count;
   }
-
-  return db.prepare(`
-    SELECT * FROM messages
-    WHERE user_id = ? AND chat_id = ? AND thread_id = ?
-    ORDER BY created_at DESC
-    LIMIT ?
-  `).all(user_id, chat_id, thread_id, limit).reverse();
+  return db.prepare(`SELECT COUNT(*) as count FROM messages WHERE chat_id = ? AND thread_id = ?`).get(chat_id, thread_id).count;
 }
 
-// --- Speaker profile operations ---
-
-export function getSpeakerProfile(user_id, chat_id) {
-  const row = db.prepare(`
-    SELECT * FROM speakers WHERE user_id = ? AND chat_id = ?
-  `).get(user_id, chat_id);
-  return row;
+export function getMessagesByUser(user_id, chat_id, limit = 20) {
+  return db.prepare(`SELECT * FROM messages WHERE user_id = ? AND chat_id = ? ORDER BY created_at DESC LIMIT ?`).all(user_id, chat_id, limit).reverse();
 }
 
-export function getAllSpeakers(chat_id, thread_id) {
-  if (thread_id === null || thread_id === undefined) {
-    return db.prepare(`
-      SELECT s.* FROM speakers s
-      WHERE s.chat_id = ?
-      ORDER BY s.message_count DESC
-    `).all(chat_id);
+// --- Speaker operations ---
+
+export function updateSpeakerStats(chat_id, user_id, username, first_name, text) {
+  const now = Date.now();
+  const existing = db.prepare(`SELECT * FROM speakers WHERE user_id = ? AND chat_id = ?`).get(user_id, chat_id);
+
+  if (existing) {
+    const newCount = existing.message_count + 1;
+    const newAvg = ((existing.avg_msg_length * existing.message_count) + text.length) / newCount;
+    const hour = new Date().getHours();
+    let hours = {};
+    try { hours = JSON.parse(existing.active_hours || '{}'); } catch {}
+    hours[hour] = (hours[hour] || 0) + 1;
+
+    db.prepare(`
+      UPDATE speakers SET message_count = ?, avg_msg_length = ?, username = COALESCE(?, username), first_name = COALESCE(?, first_name), active_hours = ?, last_updated = ?
+      WHERE user_id = ? AND chat_id = ?
+    `).run(newCount, newAvg, username, first_name, JSON.stringify(hours), now, user_id, chat_id);
+  } else {
+    const hour = new Date().getHours();
+    db.prepare(`
+      INSERT INTO speakers (user_id, chat_id, username, first_name, message_count, avg_msg_length, active_hours, last_updated)
+      VALUES (?, ?, ?, ?, 1, ?, ?, ?)
+    `).run(user_id, chat_id, username || null, first_name || null, text.length, JSON.stringify({ [hour]: 1 }), now);
   }
-
-  // For topic-specific speaker stats, we need to count from messages
-  return db.prepare(`
-    SELECT s.*, COUNT(m.id) as topic_message_count
-    FROM speakers s
-    JOIN messages m ON s.user_id = m.user_id AND s.chat_id = m.chat_id
-    WHERE s.chat_id = ? AND m.thread_id = ?
-    GROUP BY s.user_id
-    ORDER BY topic_message_count DESC
-  `).all(chat_id, thread_id);
 }
 
-export function updateSpeakerToneProfile(user_id, chat_id, toneProfile) {
-  db.prepare(`
-    UPDATE speakers SET tone_profile = ?, last_updated = ?
-    WHERE user_id = ? AND chat_id = ?
-  `).run(JSON.stringify(toneProfile), Date.now(), user_id, chat_id);
+export function getSpeakerStats(user_id, chat_id) {
+  return db.prepare(`SELECT * FROM speakers WHERE user_id = ? AND chat_id = ?`).get(user_id, chat_id);
 }
 
-export function getGroupToneSample(chat_id, thread_id, limit = 100) {
-  if (thread_id === null || thread_id === undefined) {
-    return db.prepare(`
-      SELECT m.* FROM messages m
-      WHERE m.chat_id = ? AND m.thread_id IS NULL
-      ORDER BY m.created_at DESC
-      LIMIT ?
-    `).all(chat_id, limit).reverse();
-  }
-
-  return db.prepare(`
-    SELECT m.* FROM messages m
-    WHERE m.chat_id = ? AND m.thread_id = ?
-    ORDER BY m.created_at DESC
-    LIMIT ?
-  `).all(chat_id, thread_id, limit).reverse();
+export function getAllSpeakers(chat_id) {
+  return db.prepare(`SELECT * FROM speakers WHERE chat_id = ? ORDER BY message_count DESC`).all(chat_id);
 }
 
 // --- Bot reply operations ---
 
 export function storeBotReply({ chat_id, thread_id, trigger_msg_id, reply_text, topic }) {
+  db.prepare(`INSERT INTO bot_replies (chat_id, thread_id, trigger_msg_id, reply_text, topic, created_at) VALUES (?, ?, ?, ?, ?, ?)`)
+    .run(chat_id, thread_id || null, trigger_msg_id || null, reply_text, topic || null, Date.now());
+}
+
+// --- Group summary (batch-computed, stored for reuse) ---
+
+export function getGroupSummary(chat_id, thread_id) {
+  return db.prepare(`SELECT * FROM group_summary WHERE chat_id = ? AND (thread_id = ? OR (thread_id IS NULL AND ? IS NULL))`)
+    .get(chat_id, thread_id || null, thread_id || null);
+}
+
+export function saveGroupSummary(chat_id, thread_id, summary, participants, topics, messageCount) {
   db.prepare(`
-    INSERT INTO bot_replies (chat_id, thread_id, trigger_msg_id, reply_text, topic, created_at)
-    VALUES (?, ?, ?, ?, ?, ?)
-  `).run(chat_id, thread_id || null, trigger_msg_id || null, reply_text, topic || null, Date.now());
-}
-
-export function getLastBotReplyTime(chat_id, thread_id) {
-  if (thread_id === null || thread_id === undefined) {
-    const row = db.prepare(`
-      SELECT created_at FROM bot_replies
-      WHERE chat_id = ? AND thread_id IS NULL
-      ORDER BY created_at DESC
-      LIMIT 1
-    `).get(chat_id);
-    return row ? row.created_at : 0;
-  }
-
-  const row = db.prepare(`
-    SELECT created_at FROM bot_replies
-    WHERE chat_id = ? AND thread_id = ?
-    ORDER BY created_at DESC
-    LIMIT 1
-  `).get(chat_id, thread_id);
-  return row ? row.created_at : 0;
-}
-
-export function getBotReplyCount(chat_id, thread_id, since) {
-  if (thread_id === null || thread_id === undefined) {
-    const row = db.prepare(`
-      SELECT COUNT(*) as count FROM bot_replies
-      WHERE chat_id = ? AND thread_id IS NULL AND created_at >= ?
-    `).get(chat_id, since);
-    return row.count;
-  }
-
-  const row = db.prepare(`
-    SELECT COUNT(*) as count FROM bot_replies
-    WHERE chat_id = ? AND thread_id = ? AND created_at >= ?
-  `).get(chat_id, thread_id, since);
-  return row.count;
+    INSERT INTO group_summary (chat_id, thread_id, summary, participants, topics, message_count, updated_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?)
+    ON CONFLICT(chat_id, thread_id) DO UPDATE SET
+      summary = excluded.summary,
+      participants = excluded.participants,
+      topics = excluded.topics,
+      message_count = excluded.message_count,
+      updated_at = excluded.updated_at
+  `).run(chat_id, thread_id || null, summary, JSON.stringify(participants), JSON.stringify(topics), messageCount, Date.now());
 }
 
 export default db;

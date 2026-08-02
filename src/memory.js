@@ -1,168 +1,184 @@
-import db from './database.js';
-
 /**
- * Lightweight conversation memory engine.
- * Caches and summarizes chat data locally WITHOUT calling the LLM.
- * When the AI needs context, it gets a compact summary instead of raw messages.
+ * Local analysis engine — processes chat data WITHOUT any AI calls.
+ * All operations are pure JavaScript + SQLite.
  */
 
-const MESSAGE_CACHE_LIMIT = 200; // Keep last 200 messages per topic in memory
-const SUMMARY_INTERVAL = 20; // Generate a local summary every 20 messages
+import { getRecentMessages, getMessagesByUser, getSpeakerStats, getAllSpeakers, getMessageCount, saveGroupSummary, getGroupSummary, db } from './database.js';
 
-// In-memory cache: chat_id:thread_id -> { messages: [], lastSummary: '', messageCount: 0 }
-const cache = new Map();
+// Common Persian swear words for detection
+const SWEAR_WORDS = ['کیر', 'کص', 'گایید', 'جق', 'خرف', 'چرت', 'کصخلع', 'شاش', 'کون', 'ننه', 'بیناموس'];
 
-function cacheKey(chat_id, thread_id) {
-  return `${chat_id}:${thread_id || 'general'}`;
+/**
+ * Extract frequent words from a user's messages (local, no AI)
+ */
+export function extractFrequentWords(userId, chatId, limit = 15) {
+  const messages = getMessagesByUser(userId, chatId, 50);
+  const wordCount = {};
+
+  for (const msg of messages) {
+    const words = msg.text.split(/\s+/);
+    for (const word of words) {
+      const clean = word.replace(/[!?.,،؛:"'@#$%^&*()_+=\[\]{}<>\/\\|`~]/g, '').toLowerCase();
+      if (clean.length < 3) continue;
+      wordCount[clean] = (wordCount[clean] || 0) + 1;
+    }
+  }
+
+  return Object.entries(wordCount)
+    .sort((a, b) => b[1] - a[1])
+    .slice(0, limit)
+    .map(([word, count]) => ({ word, count }));
 }
 
 /**
- * Add a message to the local cache (no LLM call)
+ * Count swears in a user's messages (local)
  */
-export function cacheMessage({ chat_id, thread_id, user_id, username, first_name, text }) {
-  const key = cacheKey(chat_id, thread_id);
-  if (!cache.has(key)) {
-    cache.set(key, { messages: [], lastSummary: '', messageCount: 0 });
+export function countSwears(userId, chatId) {
+  const messages = getMessagesByUser(userId, chatId, 30);
+  let count = 0;
+  for (const msg of messages) {
+    const lower = msg.text.toLowerCase();
+    for (const swear of SWEAR_WORDS) {
+      if (lower.includes(swear)) count++;
+    }
   }
-  const entry = cache.get(key);
-  entry.messages.push({ user_id, username, first_name, text, timestamp: Date.now() });
-  entry.messageCount++;
-
-  // Trim cache
-  if (entry.messages.length > MESSAGE_CACHE_LIMIT) {
-    entry.messages = entry.messages.slice(-MESSAGE_CACHE_LIMIT);
-  }
-
-  // Update local summary every N messages (purely local, no AI)
-  if (entry.messageCount % SUMMARY_INTERVAL === 0) {
-    updateLocalSummary(entry);
-  }
+  return count;
 }
 
 /**
- * Generate a local summary of recent conversation (no LLM — just structure data)
+ * Detect topics from messages (local pattern matching)
  */
-function updateLocalSummary(entry) {
-  const recent = entry.messages.slice(-SUMMARY_INTERVAL);
-  const participants = [...new Set(recent.map(m => m.first_name || m.username || 'ناشناس'))];
-  const topics = extractTopics(recent.map(m => m.text).join(' '));
-  
-  entry.lastSummary = {
-    participants,
-    topics,
-    messageCount: entry.messageCount,
-    timeRange: {
-      start: recent[0]?.timestamp,
-      end: recent[recent.length - 1]?.timestamp,
-    },
-    lastMessages: recent.slice(-5).map(m => ({
-      who: m.first_name || m.username || 'ناشناس',
-      text: m.text.substring(0, 100),
-    })),
-  };
-}
-
-/**
- * Extract topics locally using simple patterns (no AI)
- */
-function extractTopics(text) {
-  const lower = text.toLowerCase();
+export function detectTopics(messages) {
+  const text = messages.map(m => m.text).join(' ').toLowerCase();
   const topics = [];
-  
+
   const patterns = {
-    'سیاست': /جنگ|تحریم|انتخاب|دولت|حکومت|سیاست|ترامپ|آمریکا|ایران|اسرائیل|فلسطین/,
-    'پول و اقتصاد': /دلار|تورم|قیمت|بازار|کریپتو|بیت|ترید|پول|دبی|ثروت/,
-    'سکس و رابطه': /سکس|دختر|کراش|عاشق|دوست|دلاپ|سیدنی|انا|فمبوی|خوشگل/,
-    'موسیقی': /گیتار|موسیقی|آهنگ|اسپاتیفای|کنسرت|رپ/,
-    'تکنولوژی': /برنامه|پایتون|کد|هک|لینوکس|کالی|سیستم|کامپیوتر/,
+    'سیاست': /جنگ|تحریم|انتخاب|دولت|حکومت|سیاست|ترامپ|آمریکا|ایران|اسرائیل|فلسطین|حمله|موشک/,
+    'پول و اقتصاد': /دلار|تورم|قیمت|بازار|کریپتو|بیت|ترید|پول|دبی|ثروت|درآمد/,
+    'سکس و رابطه': /سکس|دختر|کراش|عاشق|دوست|سیدنی|انا|فمبوی|خوشگل|دلاپ|بوس/,
+    'موسیقی': /گیتار|موسیقی|آهنگ|اسپاتیفای|کنسرت|رپ|دوالبیپا/,
+    'تکنولوژی': /برنامه|پایتون|کد|هک|لینوکس|کالی|سیستم|کامپیوتر|سرور/,
     'مدرسه': /درس|امتحان|معلم|کلاس|همکلاسی|مدرسه|ریاضی/,
-    'مهاجرت': /مهاجرت|ترک|کانادا|آمریکا|ورود|ویزا/,
+    'مهاجرت': /مهاجرت|ترک|کانادا|آمریکا|ورود|ویزا|پاسپورت/,
   };
 
   for (const [topic, pattern] of Object.entries(patterns)) {
-    if (pattern.test(lower)) topics.push(topic);
+    if (pattern.test(text)) topics.push(topic);
   }
-  
   return topics;
 }
 
 /**
- * Get compact conversation context for the AI
- * Returns a formatted string with participants, topics, and recent messages
- * This is MUCH cheaper than sending 50 raw messages to the LLM
+ * Build a conversation graph: who talks to whom (local)
  */
-export function getConversationContext(chat_id, thread_id, limit = 15) {
-  const key = cacheKey(chat_id, thread_id);
-  const entry = cache.get(key);
+export function getConversationGraph(chatId, threadId) {
+  const messages = getRecentMessages(chatId, threadId, 50);
+  const graph = {};
 
-  // Also pull from database in case cache was cleared
-  const dbMessages = getRecentFromDb(chat_id, thread_id, limit);
-  
-  if (dbMessages.length === 0) return '';
-
-  const participants = [...new Set(dbMessages.map(m => m.first_name || m.username || 'ناشناس'))];
-  const topics = extractTopics(dbMessages.map(m => m.text).join(' '));
-  
-  let context = `\n## خلاصه گفتگو (${dbMessages.length} پیام اخیر):\n`;
-  context += `پارتیسیپنت‌ها: ${participants.join('، ')}\n`;
-  if (topics.length > 0) {
-    context += `موضوعات: ${topics.join('، ')}\n`;
+  for (const msg of messages) {
+    if (msg.reply_to_user_id) {
+      const from = msg.first_name || msg.username || 'ناشناس';
+      const key = `${from}`;
+      if (!graph[key]) graph[key] = {};
+      graph[key][msg.reply_to_user_id] = (graph[key][msg.reply_to_user_id] || 0) + 1;
+    }
   }
-  context += `\n### پیام‌های اخیر:\n`;
-  
-  context += dbMessages
-    .map(m => {
-      const name = m.first_name || m.username || 'ناشناس';
-      const time = new Date(m.created_at).toLocaleTimeString('fa-IR', { hour: '2-digit', minute: '2-digit' });
-      return `[${time}] ${name}: ${m.text}`;
-    })
-    .join('\n');
+
+  return graph;
+}
+
+/**
+ * Get active participants in recent messages
+ */
+export function getActiveParticipants(chatId, threadId, limit = 30) {
+  const messages = getRecentMessages(chatId, threadId, limit);
+  const participants = {};
+  for (const msg of messages) {
+    const name = msg.first_name || msg.username || 'ناشناس';
+    participants[name] = (participants[name] || 0) + 1;
+  }
+  return Object.entries(participants)
+    .sort((a, b) => b[1] - a[1])
+    .map(([name, count]) => ({ name, count }));
+}
+
+/**
+ * Measure conversation "temperature" — how fast messages are coming
+ * Returns: 'quiet' | 'normal' | 'active' | 'heated'
+ */
+export function getConversationTemp(chatId, threadId) {
+  const messages = getRecentMessages(chatId, threadId, 10);
+  if (messages.length < 2) return 'quiet';
+
+  const timeSpan = messages[messages.length - 1].created_at - messages[0].created_at;
+  const avgGap = timeSpan / (messages.length - 1) / 1000; // seconds
+
+  if (avgGap < 5) return 'heated';
+  if (avgGap < 15) return 'active';
+  if (avgGap < 60) return 'normal';
+  return 'quiet';
+}
+
+/**
+ * Build a compact local context summary (NO AI)
+ * This is sent to the AI only when it needs to respond
+ */
+export function buildLocalContext(chatId, threadId) {
+  const messages = getRecentMessages(chatId, threadId, 15);
+  if (messages.length === 0) return '';
+
+  const participants = getActiveParticipants(chatId, threadId, 15);
+  const topics = detectTopics(messages);
+  const temp = getConversationTemp(chatId, threadId);
+  const msgCount = getMessageCount(chatId, threadId);
+
+  let context = `\n## Context (local analysis, no AI needed):\n`;
+  context += `Total messages in this topic: ${msgCount}\n`;
+  context += `Conversation temperature: ${temp}\n`;
+  context += `Active participants: ${participants.map(p => `${p.name}(${p.count})`).join(', ')}\n`;
+  if (topics.length > 0) {
+    context += `Detected topics: ${topics.join(', ')}\n`;
+  }
+
+  // Recent messages
+  context += `\n### Recent messages:\n`;
+  context += messages.map(m => {
+    const name = m.first_name || m.username || 'ناشناس';
+    const time = new Date(m.created_at).toLocaleTimeString('fa-IR', { hour: '2-digit', minute: '2-digit' });
+    return `[${time}] ${name}: ${m.text}`;
+  }).join('\n');
 
   return context;
 }
 
-function getRecentFromDb(chat_id, thread_id, limit) {
-  if (thread_id === null || thread_id === undefined) {
-    return db.prepare(`
-      SELECT * FROM messages
-      WHERE chat_id = ? AND thread_id IS NULL
-      ORDER BY created_at DESC LIMIT ?
-    `).all(chat_id, limit).reverse();
-  }
-  return db.prepare(`
-    SELECT * FROM messages
-    WHERE chat_id = ? AND thread_id = ?
-    ORDER BY created_at DESC LIMIT ?
-  `).all(chat_id, thread_id, limit).reverse();
+/**
+ * Get stored batch summary (computed periodically, not per-message)
+ */
+export function getStoredSummary(chatId, threadId) {
+  const stored = getGroupSummary(chatId, threadId);
+  if (!stored) return null;
+
+  return {
+    summary: stored.summary,
+    participants: JSON.parse(stored.participants || '[]'),
+    topics: JSON.parse(stored.topics || '[]'),
+    messageCount: stored.message_count,
+    age: Date.now() - stored.updated_at,
+  };
 }
 
 /**
- * Get who replied to whom (conversation threads)
+ * Check if batch summary needs refresh (every 24h or every 100 new messages)
  */
-export function getConversationThreads(chat_id, thread_id, limit = 20) {
-  const messages = getRecentFromDb(chat_id, thread_id, limit);
-  
-  // Group messages into conversation threads based on who's talking to whom
-  // Simple heuristic: if person A and person B alternate messages, they're in a conversation
-  const threads = [];
-  let currentThread = [];
-  
-  for (let i = 0; i < messages.length; i++) {
-    const msg = messages[i];
-    if (currentThread.length === 0) {
-      currentThread.push(msg);
-    } else {
-      const lastMsg = currentThread[currentThread.length - 1];
-      const sameTimeFrame = (msg.created_at - lastMsg.created_at) < 5 * 60 * 1000; // 5 min
-      if (sameTimeFrame) {
-        currentThread.push(msg);
-      } else {
-        if (currentThread.length >= 2) threads.push(currentThread);
-        currentThread = [msg];
-      }
-    }
-  }
-  if (currentThread.length >= 2) threads.push(currentThread);
-  
-  return threads;
+export function needsBatchSummary(chatId, threadId) {
+  const stored = getStoredSummary(chatId, threadId);
+  if (!stored) return true;
+
+  const dayMs = 24 * 60 * 60 * 1000;
+  if (stored.age > dayMs) return true;
+
+  const currentCount = getMessageCount(chatId, threadId);
+  if (currentCount - stored.messageCount > 100) return true;
+
+  return false;
 }
