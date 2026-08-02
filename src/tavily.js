@@ -14,18 +14,18 @@ export function shouldSearch(text) {
   const searchTriggers = [
     // Years - recent events
     /202[0-9]/,
-    // Questions
-    /چطور|چجور|چرا|کجا|کی|کدوم|نمی‌دونم|نمیدونم|درسته|غلطه|اشتباهه|راستش|حق داره|مال کیه|کی بود|چی بود|چقدر| چند/,
+    // Questions about people, events, facts
+    /چطور|چجور|چرا|کجا|کی|کدوم|نمی‌دونم|نمیدونم|درسته|غلطه|اشتباهه|راستش|حق داره|کی بود|چی بود|چقدر|چند|رئیس|president|چه کسی|کیم|چیه/,
     // Factual indicators
-    /آمار|statistic|گزارش|report|طبق|according|منبع|source|news|خبر/,
+    /آمار|گزارش|طبق|according|منبع|source|news|خبر|اطلاعات|دقیق|جدید|اخیر|الان|حالا/,
     // Political/geopolitical
-    /جنگ|war|تحریم|sanction|انتخاب|election|رئیس|president|دولت|حکومت|سیاست|معاهده|ترامپ|biden|Trump/,
-    // Sports
-    /گل|goal|بازی|match|فینال|final|لیگ|league|جام|cup|messi|ronaldo|رئال|بارسا|real madrid|barcelona/,
+    /جنگ|war|تحریم|sanction|انتخاب|election|رئیس|president|دولت|حکومت|سیاست|معاهده|ترامپ|trump|biden|آمریکا|ایران|اسرائیل|فلسطین|روسیه|اوکراین|چین/,
     // Economics
     /دلار|dollar|تورم|inflation|قیمت|price|بازار|market|کریپتو|crypto|bitcoin|بیت‌کوین/,
     // Science/tech
     /واکسن|vaccine|کرونا|covid|ai|هوش مصنوعی|spaceship|space|مریخ|mars/,
+    // People/celebrities
+    /کیه|چه کسی|چه کس|بازیگر|خواننده|سیاستمدار|actor|singer|celebr|سیدنی|sydney|sweeney/,
   ];
 
   for (const pattern of searchTriggers) {
