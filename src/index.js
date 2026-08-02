@@ -1,9 +1,10 @@
 import TelegramBot from 'node-telegram-bot-api';
-import { storeMessage, updateSpeakerStats, saveLearnedFact, getLearnedFacts } from './database.js';
+import { storeMessage, updateSpeakerStats, saveLearnedFact, getLearnedFacts, db } from './database.js';
 import { handleReplyToBot, handleDirectMention } from './decision.js';
 import { generateResponse } from './llm.js';
 import { startHealthServer } from './health.js';
 import { shouldSearch, searchFacts, formatSearchResultsForLLM } from './tavily.js';
+import { handleCodeRequest } from './coder.js';
 
 const token = process.env.TELEGRAM_BOT_TOKEN;
 if (!token) { console.error('❌ TELEGRAM_BOT_TOKEN required.'); process.exit(1); }
@@ -131,6 +132,73 @@ bot.onText(/\/gahmood_ask (.+)/, async (msg, match) => {
   } catch (err) {
     console.error('[Ask]', err.message);
     await bot.sendMessage(chat_id, 'الان نمی‌تونم.', opts);
+  }
+});
+
+// --- /shahcode — Code generator ---
+
+// Store last project per user for editing
+const userProjects = new Map(); // user_id -> { files, projectName }
+
+bot.onText(/\/shahcode(?:\s+(.*))?/s, async (msg, match) => {
+  if (msg.chat.type !== 'group' && msg.chat.type !== 'supergroup') return;
+  const chat_id = msg.chat.id;
+  const thread_id = msg.message_thread_id || null;
+  const user_id = msg.from.id;
+  const first_name = msg.from.first_name || 'ناشناس';
+  const promptText = match?.[1]?.trim();
+  const opts = { reply_to_message_id: msg.message_id };
+  if (thread_id !== null) opts.message_thread_id = thread_id;
+
+  if (!promptText) {
+    await bot.sendMessage(chat_id, 'نحوه استفاده:\n`/shahcode یه سایت فروشگاهی بساز`\n`/shahcode edit دکمه سبد خرید اضافه کن`\n`/shahcode list`', { ...opts, parse_mode: 'Markdown' });
+    return;
+  }
+
+  // /shahcode list — show recent projects
+  if (promptText.toLowerCase() === 'list') {
+    const project = userProjects.get(user_id);
+    if (!project) {
+      await bot.sendMessage(chat_id, 'هنوز پروژه‌ای نساختی. `/shahcode <توضیح پروژه>` بزن.', { ...opts, parse_mode: 'Markdown' });
+    } else {
+      await bot.sendMessage(chat_id, `آخرین پروژه تو: ${project.projectName} (${project.files.length} فایل)\nبرای تغییر: \`/shahcode edit <تغییر>\``, { ...opts, parse_mode: 'Markdown' });
+    }
+    return;
+  }
+
+  // /shahcode edit <changes>
+  const isEdit = promptText.toLowerCase().startsWith('edit ');
+  const actualPrompt = isEdit ? promptText.substring(5).trim() : promptText;
+
+  if (isEdit && !userProjects.has(user_id)) {
+    await bot.sendMessage(chat_id, 'اول یه پروژه بساز بعد edit کن. `/shahcode <توضیح پروژه>`', { ...opts, parse_mode: 'Markdown' });
+    return;
+  }
+
+  await bot.sendChatAction(chat_id, 'typing');
+  await bot.sendMessage(chat_id, `🛠 دارم کد می‌زنم... ${isEdit ? '(ویرایش)' : ''}`, opts);
+
+  try {
+    const previousFiles = isEdit ? userProjects.get(user_id).files : null;
+    const result = await handleCodeRequest({
+      chat_id, thread_id, prompt: actualPrompt, telegram_msg_id: msg.message_id, isEdit, previousFiles
+    });
+
+    if (result.error) {
+      await bot.sendMessage(chat_id, `خطا: ${result.error}`, opts);
+      return;
+    }
+
+    // Store for future edits
+    userProjects.set(user_id, { files: result.files, projectName: result.projectName });
+
+    // Send the zip file
+    const caption = `📦 ${result.projectName}\n📁 ${result.fileCount} فایل\n👤 برای ${first_name}\n\nبرای تغییر: /shahcode edit <تغییر>`;
+    await bot.sendDocument(chat_id, result.zipPath, { ...opts, caption });
+    console.log(`[Code] Sent ${result.fileCount} files as zip to ${first_name}`);
+  } catch (err) {
+    console.error('[Code] Error:', err.message);
+    await bot.sendMessage(chat_id, 'خطا تو ساخت پروژه. دوباره امتحان کن.', opts);
   }
 });
 
