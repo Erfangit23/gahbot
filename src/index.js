@@ -19,14 +19,71 @@ const bot = new TelegramBot(token, {
 });
 
 let botInfo = null;
+let deployMessageSent = false;
+
 bot.getMe().then((info) => {
   botInfo = info;
   console.log(`✅ Gahmood started: @${botInfo.username} (ID: ${botInfo.id})`);
   console.log('🤖 Ready. Mention or reply to talk.');
+
+  // Send deploy message to all groups the bot is in
+  sendDeployMessage();
 }).catch((err) => {
   console.error('❌ Failed:', err.message);
   process.exit(1);
 });
+
+/**
+ * On deploy/redeploy, reply "حذف سکوت" to the last message from @The_usdt_hunter in each group.
+ * Runs only once per startup.
+ */
+async function sendDeployMessage() {
+  if (deployMessageSent) return;
+  deployMessageSent = true;
+
+  const TARGET_USERNAME = 'The_usdt_hunter';
+  const DEPLOY_TEXT = 'حذف سکوت';
+
+  try {
+    // Get all unique chat_ids from the database
+    const chats = db.prepare(`SELECT DISTINCT chat_id FROM messages`).all();
+    console.log(`[Deploy] Found ${chats.length} chats. Looking for @${TARGET_USERNAME}'s last message...`);
+
+    for (const { chat_id } of chats) {
+      try {
+        // Find the last message from @The_usdt_hunter in this chat
+        const lastMsg = db.prepare(`
+          SELECT * FROM messages
+          WHERE chat_id = ? AND username = ?
+          ORDER BY created_at DESC
+          LIMIT 1
+        `).get(chat_id, TARGET_USERNAME);
+
+        if (!lastMsg) {
+          console.log(`[Deploy] No message from @${TARGET_USERNAME} in chat ${chat_id}, skipping.`);
+          continue;
+        }
+
+        // Reply to that message
+        const opts = {
+          reply_to_message_id: lastMsg.telegram_msg_id,
+          disable_web_page_preview: true,
+        };
+
+        if (lastMsg.thread_id) {
+          opts.message_thread_id = lastMsg.thread_id;
+        }
+
+        await bot.sendMessage(chat_id, DEPLOY_TEXT, opts);
+        console.log(`[Deploy] Sent "${DEPLOY_TEXT}" to chat ${chat_id}, reply to msg ${lastMsg.telegram_msg_id}`);
+      } catch (err) {
+        console.error(`[Deploy] Error in chat ${chat_id}:`, err.message);
+      }
+    }
+  } catch (err) {
+    console.error('[Deploy] Error:', err.message);
+  }
+}
 
 function isBotMentioned(text) {
   if (!text) return false;
