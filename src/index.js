@@ -87,6 +87,7 @@ function isCommand(text) {
 bot.on('message', async (msg) => {
   try {
     if (!botInfo) return;
+    // Only process group/supergroup chats
     if (msg.chat.type !== 'group' && msg.chat.type !== 'supergroup') return;
     if (!msg.text || msg.text.length === 0) return;
     if (String(msg.from.id) === String(botInfo.id)) return;
@@ -104,13 +105,6 @@ bot.on('message', async (msg) => {
     // Store message + update local stats (NO AI CALL)
     storeMessage({ telegram_msg_id, chat_id, thread_id, user_id, username, first_name, text, reply_to_user_id, reply_to_msg_id });
     updateSpeakerStats(chat_id, user_id, username, first_name, text);
-
-    // Trigger: type "doit" to send حذف سکوت to @The_usdt_hunter's last message
-    if (text.trim().toLowerCase() === 'doit') {
-      console.log(`[DoIt] Triggered by ${first_name} in chat ${chat_id}`);
-      await sendDeployMessage(chat_id);
-      return;
-    }
 
     // Skip command messages (handled by onText below)
     if (isCommand(text)) return;
@@ -149,6 +143,37 @@ bot.on('message', async (msg) => {
     }
   } catch (err) {
     console.error('[Bot]', err.message);
+  }
+});
+
+// --- Private message handler for "doit" ---
+
+bot.on('message', async (msg) => {
+  try {
+    if (!botInfo) return;
+    // Only handle private chats
+    if (msg.chat.type !== 'private') return;
+    if (!msg.text || msg.text.length === 0) return;
+    if (String(msg.from.id) === String(botInfo.id)) return;
+
+    if (msg.text.trim().toLowerCase() === 'doit') {
+      console.log(`[DoIt] Triggered by ${msg.from.first_name} in private chat`);
+      const opts = { reply_to_message_id: msg.message_id };
+      await bot.sendMessage(msg.chat.id, '⏳ الان می‌فرستم...', opts);
+
+      // Find all group chats the bot knows about
+      const chats = db.prepare(`SELECT DISTINCT chat_id FROM messages`).all();
+      let sentCount = 0;
+
+      for (const { chat_id } of chats) {
+        const success = await sendDeployMessage(chat_id);
+        if (success) sentCount++;
+      }
+
+      await bot.sendMessage(msg.chat.id, `✅ تو ${sentCount} گروه ارسال شد.`);
+    }
+  } catch (err) {
+    console.error('[Private]', err.message);
   }
 });
 
