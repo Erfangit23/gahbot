@@ -35,7 +35,7 @@ bot.getMe().then((info) => {
  */
 async function sendDeployMessage(chat_id) {
   const TARGET_USERNAME = 'The_usdt_hunter';
-  const DEPLOY_TEXT = 'حذف سکوت';
+  const DEPLOY_TEXT = 'operation failed';
 
   try {
     // Find the last message from @The_usdt_hunter in this chat
