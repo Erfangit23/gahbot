@@ -1,5 +1,5 @@
 import TelegramBot from 'node-telegram-bot-api';
-import { storeMessage, updateSpeakerStats, saveLearnedFact, getLearnedFacts, db } from './database.js';
+import db, { storeMessage, updateSpeakerStats, saveLearnedFact, getLearnedFacts } from './database.js';
 import { handleReplyToBot, handleDirectMention } from './decision.js';
 import { generateResponse } from './llm.js';
 import { startHealthServer } from './health.js';
